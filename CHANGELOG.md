@@ -8,6 +8,8 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 ### Added
 
+- Added a dedicated observability guide (OpenTelemetry + Elastic APM) and linked it from relevant docs.
+
 ### Changed
 
 ## [0.2.4] - 2026-05-20
