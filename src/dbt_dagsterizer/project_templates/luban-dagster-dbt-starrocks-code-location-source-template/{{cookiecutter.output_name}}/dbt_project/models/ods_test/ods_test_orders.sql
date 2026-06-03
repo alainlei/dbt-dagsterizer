@@ -4,7 +4,9 @@
     materialized='incremental',
     schema=env_var('STARROCKS_ODS_DB', 'ods'),
     alias='orders',
-    tags=['ods_test']
+    tags=['ods_test'],
+    table_type='PRIMARY',
+    keys=['order_id'],
   )
 }}
 
