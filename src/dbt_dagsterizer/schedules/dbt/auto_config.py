@@ -46,6 +46,7 @@ def build_auto_dbt_schedule_specs() -> list[dict]:
                 hour = int(schedule_meta.get("hour", 0))
                 minute = int(schedule_meta.get("minute", 0))
                 lookback_days = int(schedule_meta.get("lookback_days", 0))
+                offset_days = int(schedule_meta.get("offset_days", 1))
                 specs.append(
                     daily_at(
                         name=str(name),
@@ -53,6 +54,7 @@ def build_auto_dbt_schedule_specs() -> list[dict]:
                         hour=hour,
                         minute=minute,
                         lookback_days=lookback_days,
+                        offset_days=offset_days,
                         enabled=enabled,
                     )
                 )

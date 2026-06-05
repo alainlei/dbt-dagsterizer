@@ -364,6 +364,7 @@ def build_meta_group() -> click.Group:
     @click.option("--hour", type=int, required=True)
     @click.option("--minute", type=int, required=True)
     @click.option("--lookback-days", type=int, default=0, show_default=True)
+    @click.option("--offset-days", type=int, default=1, show_default=True)
     @click.option("--enabled/--disabled", default=True, show_default=True)
     @click.option("--prepare/--no-prepare", default=True, show_default=True)
     @click.option("--parse/--no-parse", default=False, show_default=True)
@@ -376,6 +377,7 @@ def build_meta_group() -> click.Group:
         hour: int,
         minute: int,
         lookback_days: int,
+        offset_days: int,
         enabled: bool,
         prepare: bool,
         parse: bool,
@@ -386,6 +388,8 @@ def build_meta_group() -> click.Group:
             raise click.ClickException("--minute must be 0..59")
         if lookback_days < 0:
             raise click.ClickException("--lookback-days must be >= 0")
+        if offset_days < 0:
+            raise click.ClickException("--offset-days must be >= 0")
 
         dbt_project_path = resolve_dir_arg(dbt_project_dir)
         if not dbt_project_path.exists():
@@ -418,6 +422,7 @@ def build_meta_group() -> click.Group:
             hour=hour,
             minute=minute,
             lookback_days=lookback_days,
+            offset_days=offset_days,
             enabled=enabled,
         )
         save_orchestration_with_validation(target=target, data=data, dbt_project_dir=dbt_project_path, prepare=prepare)

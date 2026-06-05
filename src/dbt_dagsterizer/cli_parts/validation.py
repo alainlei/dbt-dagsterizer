@@ -102,6 +102,9 @@ def validate_orchestration(
             lookback_days = schedule_cfg.get("lookback_days", 0)
             if not isinstance(lookback_days, int) or lookback_days < 0:
                 issues.append(ValidationIssue("error", f"schedules.{name}.lookback_days must be >= 0"))
+            offset_days = schedule_cfg.get("offset_days", 1)
+            if not isinstance(offset_days, int) or offset_days < 0:
+                issues.append(ValidationIssue("error", f"schedules.{name}.offset_days must be >= 0"))
 
     pc = orchestration.get("partition_change")
     if pc is not None and not isinstance(pc, dict):

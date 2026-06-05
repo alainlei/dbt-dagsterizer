@@ -5,6 +5,7 @@ def daily_at(
     hour: int,
     minute: int,
     lookback_days: int = 0,
+    offset_days: int = 1,
     enabled: bool = True,
     dedupe_across_ticks: bool = True,
 ):
@@ -18,6 +19,8 @@ def daily_at(
         raise ValueError("minute must be 0..59")
     if lookback_days < 0:
         raise ValueError("lookback_days must be >= 0")
+    if offset_days < 0:
+        raise ValueError("offset_days must be >= 0")
 
     cron = f"{minute} {hour} * * *"
     return {
@@ -25,7 +28,7 @@ def daily_at(
         "cron_schedule": cron,
         "job_name": job_name,
         "partition_type": "daily",
-        "partition_offset_days": 1,
+        "partition_offset_days": offset_days,
         "partition_lookback_days": lookback_days,
         "partition_offset_hours": 0,
         "partition_lookback_hours": 0,

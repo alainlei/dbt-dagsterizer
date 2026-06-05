@@ -244,6 +244,7 @@ def set_schedule(
     hour: int,
     minute: int,
     lookback_days: int,
+    offset_days: int = 1,
     enabled: bool,
 ) -> None:
     name = name.strip()
@@ -262,6 +263,7 @@ def set_schedule(
         "hour": int(hour),
         "minute": int(minute),
         "lookback_days": int(lookback_days),
+        "offset_days": int(offset_days),
         "enabled": bool(enabled),
     }
 
