@@ -59,10 +59,10 @@ class LubanDagsterDbtTranslator(DagsterDbtTranslator):
 
     def get_group_name(self, dbt_resource_props: Mapping[str, Any]) -> Optional[str]:
         fqn = dbt_resource_props.get("fqn", [])
-        if "dwd" in fqn:
-            return "dwd"
-        if "dws" in fqn:
-            return "dws"
+        # dbt FQN structure: [project, folder, ..., model_name]
+        # Use the folder name (second element) as the group name
+        if len(fqn) >= 3:
+            return fqn[1]
         return None
 
     def get_partitions_def(self, dbt_resource_props: Mapping[str, Any]) -> Optional[dg.PartitionsDefinition]:
