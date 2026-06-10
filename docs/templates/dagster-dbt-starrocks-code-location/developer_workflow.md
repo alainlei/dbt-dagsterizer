@@ -297,7 +297,9 @@ Notes:
 
 ## Source observation (DataVersion)
 
-Define a watermark column for the dbt source table:
+Define source observation under `meta.luban.observe` for the dbt source table.
+
+Use `watermark_column` for the common case where `max(...)` over a single column is enough:
 
 ```yaml
 sources:
@@ -309,6 +311,29 @@ sources:
             observe:
               watermark_column: ods_updated_at
 ```
+
+Use `watermark_sql` when you need custom logic, for example a cast, a filtered query, or a derived scalar:
+
+```yaml
+sources:
+  - name: ods
+    tables:
+      - name: customers
+        meta:
+          luban:
+            observe:
+              watermark_sql: |
+                select max(coalesce(updated_at, created_at))
+                from ods.customers
+                where is_deleted = 0
+```
+
+Rules:
+
+- At least one of `watermark_column` or `watermark_sql` must be set.
+- `watermark_sql` must return a single scalar value; the value is converted to a string and used as the source asset `DataVersion`.
+- If both are set, `watermark_sql` takes precedence.
+- `watermark_column` uses the resolved source database name automatically. `watermark_sql` runs as written, so include any needed database/schema qualification directly in the query.
 
 This drives observable source assets and the observation job/schedule.
 

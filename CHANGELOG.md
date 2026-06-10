@@ -6,6 +6,11 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 ## [Unreleased]
 
+### Added
+
+- Added optional `watermark_sql` support for observable source assets as an alternative to `watermark_column`.
+- Documented `watermark_sql` usage, precedence, and scalar-result expectations in the template docs.
+
 ## [0.3.0] - 2026-06-10
 
 ### Breaking

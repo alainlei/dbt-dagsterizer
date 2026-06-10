@@ -32,11 +32,25 @@ Key pieces:
 - ODS observable sources wiring: provided by `dbt_dagsterizer.assets.sources`
 - Observation job/schedule: provided by `dbt_dagsterizer.jobs.sources` and `dbt_dagsterizer.schedules.sources`
 
-The observable source assets compute a `DataVersion` by querying StarRocks:
+The observable source assets compute a `DataVersion` in one of two ways:
+
+1. Column-based watermark:
 
 ```sql
 select max(<watermark_column>) from <ods_db>.<table>
 ```
+
+2. Custom SQL watermark:
+
+```sql
+<watermark_sql>
+```
+
+Notes:
+
+- `watermark_sql` must return a single scalar value because the result is passed through `query_scalar(...)` and stored as the source asset's `DataVersion`.
+- If both `watermark_column` and `watermark_sql` are configured, `watermark_sql` takes precedence.
+- `watermark_column` uses the resolved source database name automatically. `watermark_sql` is executed as-is, so include any required database/schema qualification in the SQL itself.
 
 When that value changes, Dagster records a new observation event for the source asset.
 
