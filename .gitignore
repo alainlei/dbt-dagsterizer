@@ -25,6 +25,8 @@ dist/
 .eggs/
 *.egg
 
+uv.lock
+
 .env
 .env.*
 !.env.example
@@ -33,4 +35,3 @@ dist/
 .idea/
 .vscode/
 *.iml
-
