@@ -34,6 +34,8 @@ If you are developing in this repository:
 uv sync --dev
 ```
 
+For the local development workflow with a rendered validation project wired to your working tree, see `docs/development/local-development.md`.
+
 If you are consuming the package from another repo, add it as a dependency in that repo and upgrade it like any other dependency (pinning is recommended for reproducible deployments).
 
 ## Quick start (CLI)
@@ -104,4 +106,5 @@ If you configure any model/job as `daily` partitioned (for example via `dbt_proj
 
 - Concepts overview: `concepts/overview.md`
 - CLI reference: `concepts/cli.md`
+- Local package development: `development/local-development.md`
 - Code location template docs: `templates/dagster-dbt-starrocks-code-location/README.md`

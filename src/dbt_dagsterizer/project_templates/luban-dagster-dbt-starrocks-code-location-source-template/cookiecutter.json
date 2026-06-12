@@ -6,6 +6,7 @@
   "package_name": "",
   "dagster_version": "1.12.19",
   "dbt_dagsterizer_version": "",
+  "dbt_dagsterizer_file_url": "",
   "default_env": "development",
   "code_location_port": "3000",
   "include_sample_dbt_project": false,

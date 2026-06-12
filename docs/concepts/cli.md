@@ -88,6 +88,7 @@ Notes:
 - `--output-name` controls the output folder name. If not provided, it defaults to a kebab-case name derived from `--project-name`.
 - `--dagster-version` pins Dagster (and `dagster-webserver` in the dev dependency group) in the rendered `pyproject.toml`.
 - `--dbt-dagsterizer-version` pins `dbt-dagsterizer` in the rendered `pyproject.toml`. If not provided, it defaults to the installed CLI version (when available) so generated projects align with the generator.
+- `--local-dbt-dagsterizer-path` writes a `dbt-dagsterizer @ file://...` dependency into the rendered `pyproject.toml` (mutually exclusive with `--dbt-dagsterizer-version` and `--no-pin-dbt-dagsterizer`).
 - `--no-pin-dbt-dagsterizer` leaves `dbt-dagsterizer` unpinned in the rendered `pyproject.toml` (mutually exclusive with `--dbt-dagsterizer-version`).
 - `--namespace` is optional and is used as a prefix for generated defaults (for example OTEL service naming and StarRocks DB names).
 - `--include-docker` is optional; when enabled, includes a local StarRocks docker-compose file and docker-related Make targets.

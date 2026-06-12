@@ -69,13 +69,16 @@ def test_build_observable_source_assets_accepts_legacy_specs_without_watermark_s
     from dbt_dagsterizer.assets.sources import factory
 
     queries: list[str] = []
+    decorator_kwargs: dict[str, object] = {}
 
     class FakeStarRocks:
         def query_scalar(self, sql: str) -> str:
             queries.append(sql)
             return "2026-06-10T00:00:00"
 
-    def fake_observable_source_asset(**_kwargs):
+    def fake_observable_source_asset(**kwargs):
+        decorator_kwargs.update(kwargs)
+
         def decorator(fn):
             return fn
 
@@ -102,6 +105,7 @@ def test_build_observable_source_assets_accepts_legacy_specs_without_watermark_s
     result = assets[0](SimpleNamespace(resources=SimpleNamespace(starrocks=FakeStarRocks())))
 
     assert isinstance(result, dg.DataVersion)
+    assert decorator_kwargs["group_name"] == "source"
     assert queries == ["select max(`updated_at`) from `ods`.`orders`"]
 
 

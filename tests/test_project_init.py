@@ -7,6 +7,15 @@ from click.testing import CliRunner
 from dbt_dagsterizer.cli import cli
 
 
+def _make_local_dbt_dagsterizer_checkout(path: Path, *, project_name: str = "dbt-dagsterizer") -> Path:
+    path.mkdir(parents=True, exist_ok=True)
+    (path / "pyproject.toml").write_text(
+        f'[project]\nname = "{project_name}"\nversion = "0.0.0"\n',
+        encoding="utf-8",
+    )
+    return path
+
+
 def test_project_init_renders_into_output_dir(tmp_path: Path):
     runner = CliRunner()
     out_dir = tmp_path / "out"
@@ -121,3 +130,90 @@ def test_project_init_errors_when_output_dir_exists_without_force(tmp_path: Path
     )
     assert result.exit_code != 0
     assert "Output directory already exists" in result.output
+
+
+def test_project_init_local_path_renders_file_url_dependency(tmp_path: Path):
+    runner = CliRunner()
+    out_dir = tmp_path / "out"
+    checkout = _make_local_dbt_dagsterizer_checkout(tmp_path / "dbt-dagsterizer")
+
+    result = runner.invoke(
+        cli,
+        [
+            "project",
+            "init",
+            "--output-dir",
+            str(out_dir),
+            "--project-name",
+            "Demo App",
+            "--local-dbt-dagsterizer-path",
+            str(checkout),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    pyproject = (out_dir / "demo-app" / "pyproject.toml").read_text(encoding="utf-8")
+    assert f'"dbt-dagsterizer @ {checkout.resolve().as_uri()}"' in pyproject
+
+
+def test_project_init_local_path_requires_dbt_dagsterizer_checkout(tmp_path: Path):
+    runner = CliRunner()
+    out_dir = tmp_path / "out"
+    checkout = _make_local_dbt_dagsterizer_checkout(tmp_path / "not-dagsterizer", project_name="other")
+
+    result = runner.invoke(
+        cli,
+        [
+            "project",
+            "init",
+            "--output-dir",
+            str(out_dir),
+            "--project-name",
+            "Demo App",
+            "--local-dbt-dagsterizer-path",
+            str(checkout),
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "must point to a dbt-dagsterizer checkout" in result.output
+
+
+def test_project_init_local_path_is_mutually_exclusive_with_version_flags(tmp_path: Path):
+    runner = CliRunner()
+    checkout = _make_local_dbt_dagsterizer_checkout(tmp_path / "dbt-dagsterizer")
+
+    result_with_version = runner.invoke(
+        cli,
+        [
+            "project",
+            "init",
+            "--output-dir",
+            str(tmp_path / "out-version"),
+            "--project-name",
+            "Demo App",
+            "--local-dbt-dagsterizer-path",
+            str(checkout),
+            "--dbt-dagsterizer-version",
+            "0.3.1",
+        ],
+    )
+    assert result_with_version.exit_code != 0
+    assert "mutually exclusive" in result_with_version.output
+
+    result_with_no_pin = runner.invoke(
+        cli,
+        [
+            "project",
+            "init",
+            "--output-dir",
+            str(tmp_path / "out-no-pin"),
+            "--project-name",
+            "Demo App",
+            "--local-dbt-dagsterizer-path",
+            str(checkout),
+            "--no-pin-dbt-dagsterizer",
+        ],
+    )
+    assert result_with_no_pin.exit_code != 0
+    assert "mutually exclusive" in result_with_no_pin.output
