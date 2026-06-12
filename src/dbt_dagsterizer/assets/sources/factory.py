@@ -66,6 +66,7 @@ def build_observable_source_assets(
 
         @dg.observable_source_asset(
             key=resolve_source_asset_key(source_name, table_name),
+            group_name="source",
             required_resource_keys={"starrocks"},
         )
         def _observable(context) -> dg.DataVersion:

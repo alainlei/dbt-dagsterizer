@@ -2,6 +2,8 @@
 
 This guide is for developing the source template and verifying the rendered project locally.
 
+If you are developing `dbt-dagsterizer` itself and want the rendered project to depend on your local checkout, see [../../development/local-development.md](../../development/local-development.md).
+
 ## Render the template
 
 Use the embedded template renderer:
@@ -84,6 +86,8 @@ Append new rows (simulate incremental arrival):
 ```bash
 make ods-test-append
 ```
+
+Note: in the sample project, `ods_test_*` models exist only to bootstrap demo ODS tables locally. In a real project, the ODS layer is typically external and appears as dbt `source(...)` assets. Because the sample bootstrap models write to the same physical ODS relations that the dbt sources reference, the Dagster lineage graph may not present those demo bootstrap relationships exactly the way a production graph would.
 
 ## Run Dagster
 

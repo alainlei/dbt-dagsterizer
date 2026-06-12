@@ -12,7 +12,9 @@ dependencies = [
     "dagster-dbt",
     "dagster-postgres",
     "dagster-k8s",
-{% if cookiecutter.dbt_dagsterizer_version %}
+{% if cookiecutter.dbt_dagsterizer_file_url %}
+    "dbt-dagsterizer @ {{cookiecutter.dbt_dagsterizer_file_url}}",
+{% elif cookiecutter.dbt_dagsterizer_version %}
     "dbt-dagsterizer~={{cookiecutter.dbt_dagsterizer_version}}",
 {% else %}
     "dbt-dagsterizer",

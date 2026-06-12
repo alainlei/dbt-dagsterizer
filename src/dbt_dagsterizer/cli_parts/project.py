@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import importlib.metadata
 import re
+import tomllib
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -94,6 +95,32 @@ def _print_template_names() -> None:
         click.echo(name)
 
 
+def _validate_local_dbt_dagsterizer_path(path: Path) -> str:
+    pyproject_path = path / "pyproject.toml"
+    if not pyproject_path.is_file():
+        raise click.ClickException(
+            "--local-dbt-dagsterizer-path must point to a dbt-dagsterizer checkout "
+            f"containing pyproject.toml: {path}"
+        )
+
+    try:
+        with pyproject_path.open("rb") as f:
+            pyproject_data = tomllib.load(f)
+    except tomllib.TOMLDecodeError as e:
+        raise click.ClickException(
+            f"Failed to parse {pyproject_path} for --local-dbt-dagsterizer-path: {e}"
+        ) from e
+
+    project_name = str((pyproject_data.get("project") or {}).get("name") or "").strip()
+    if project_name != "dbt-dagsterizer":
+        raise click.ClickException(
+            "--local-dbt-dagsterizer-path must point to a dbt-dagsterizer checkout "
+            f"(found project.name={project_name!r} in {pyproject_path})"
+        )
+
+    return path.as_uri()
+
+
 @contextmanager
 def _template_dir(template_name: str):
     pkg = "dbt_dagsterizer"
@@ -151,6 +178,12 @@ def build_project_group() -> click.Group:
         help="Pin dbt-dagsterizer in the rendered project's dependencies. Defaults to the installed dbt-dagsterizer version if available.",
     )
     @click.option(
+        "--local-dbt-dagsterizer-path",
+        type=click.Path(path_type=Path),
+        default=None,
+        help="Use a local dbt-dagsterizer checkout (writes a file:// dependency into the rendered project).",
+    )
+    @click.option(
         "--no-pin-dbt-dagsterizer",
         is_flag=True,
         default=False,
@@ -174,6 +207,7 @@ def build_project_group() -> click.Group:
         namespace: str,
         dagster_version: str,
         dbt_dagsterizer_version: str | None,
+        local_dbt_dagsterizer_path: Path | None,
         no_pin_dbt_dagsterizer: bool,
         default_env: str,
         code_location_port: str,
@@ -206,15 +240,39 @@ def build_project_group() -> click.Group:
         if not dagster_version_value:
             raise click.ClickException("--dagster-version must be non-empty")
 
-        if no_pin_dbt_dagsterizer:
+        if local_dbt_dagsterizer_path is not None:
+            if no_pin_dbt_dagsterizer or dbt_dagsterizer_version is not None:
+                raise click.ClickException(
+                    "--local-dbt-dagsterizer-path is mutually exclusive with "
+                    "--no-pin-dbt-dagsterizer and --dbt-dagsterizer-version"
+                )
+
+            local_dbt_dagsterizer_path = local_dbt_dagsterizer_path.expanduser().resolve()
+            if not local_dbt_dagsterizer_path.exists():
+                raise click.ClickException(
+                    f"--local-dbt-dagsterizer-path does not exist: {local_dbt_dagsterizer_path}"
+                )
+            if not local_dbt_dagsterizer_path.is_dir():
+                raise click.ClickException(
+                    f"--local-dbt-dagsterizer-path must be a directory: {local_dbt_dagsterizer_path}"
+                )
+
+            dbt_dagsterizer_file_url_value = _validate_local_dbt_dagsterizer_path(
+                local_dbt_dagsterizer_path
+            )
+            dbt_dagsterizer_version_value = ""
+        elif no_pin_dbt_dagsterizer:
+            dbt_dagsterizer_file_url_value = ""
             if dbt_dagsterizer_version is not None:
                 raise click.ClickException(
                     "--no-pin-dbt-dagsterizer and --dbt-dagsterizer-version are mutually exclusive"
                 )
             dbt_dagsterizer_version_value = ""
         elif dbt_dagsterizer_version is None:
+            dbt_dagsterizer_file_url_value = ""
             dbt_dagsterizer_version_value = _default_dbt_dagsterizer_version()
         else:
+            dbt_dagsterizer_file_url_value = ""
             dbt_dagsterizer_version_value = dbt_dagsterizer_version.strip()
             if not dbt_dagsterizer_version_value:
                 raise click.ClickException(
@@ -238,6 +296,7 @@ def build_project_group() -> click.Group:
             "namespace": namespace_value,
             "dagster_version": dagster_version_value,
             "dbt_dagsterizer_version": dbt_dagsterizer_version_value,
+            "dbt_dagsterizer_file_url": dbt_dagsterizer_file_url_value,
             "default_env": default_env,
             "code_location_port": str(code_location_port),
             "include_sample_dbt_project": bool(include_sample_dbt_project),

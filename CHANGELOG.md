@@ -6,6 +6,17 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 ## [Unreleased]
 
+### Added
+
+- Added `--local-dbt-dagsterizer-path` to `project init` to render projects that depend on a local `dbt-dagsterizer` checkout via a `file://` dependency.
+- Added `make refresh-dagsterizer` to the rendered project template to reinstall a local `dbt-dagsterizer` dependency (`uv sync --reinstall-package dbt-dagsterizer`) and re-sync template macros.
+- Added a dedicated local development guide for iterating on `dbt-dagsterizer` with a rendered validation project.
+
+### Fixed
+
+- Fixed observable source assets to set `group_name="source"` so source-like assets do not appear in Dagster’s `default` group.
+- Clarified in the sample template docs that `ods_test_*` models only bootstrap demo ODS tables locally and may make the Dagster lineage graph differ from a production project.
+
 ## [0.3.1] - 2026-06-10
 
 ### Added
