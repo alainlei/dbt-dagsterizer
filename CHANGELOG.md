@@ -11,6 +11,17 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 - Added `--local-dbt-dagsterizer-path` to `project init` to render projects that depend on a local `dbt-dagsterizer` checkout via a `file://` dependency.
 - Added `make refresh-dagsterizer` to the rendered project template to reinstall a local `dbt-dagsterizer` dependency (`uv sync --reinstall-package dbt-dagsterizer`) and re-sync template macros.
 - Added a dedicated local development guide for iterating on `dbt-dagsterizer` with a rendered validation project.
+- Added dynamic partitioning support for non-time-based partition strategies (e.g., country codes, tenant IDs, data sources):
+  - Introduced `partitions.dynamic` section in `dagsterization.yml` to define named dynamic partitions with `initial_partition_keys` and model assignments.
+  - Added `DynamicPartitionsDefinition` caching and management system (`partitions_dynamic.py`) for creating and updating dynamic partition definitions.
+  - Extended orchestration configuration system to parse, index, and manage dynamic partition specs alongside daily and unpartitioned models.
+  - Updated asset translator (`LubanDagsterDbtTranslator`) to resolve dynamic partition specs and assign correct `PartitionsDefinition` to assets.
+  - Extended job factory to create asset jobs with dynamic partition support using `dynamic:partition_name` specs.
+  - Added schedule factory support for dynamic partitions with schedules that emit `RunRequest` for all dynamic partition keys.
+  - Implemented dynamic partitions bootstrap sensor that synchronizes partition keys from `dagsterization.yml` to Dagster instance at startup.
+  - Added partition change detector framework for dynamic partitions (watermark-based deduplication and change detection).
+  - Created centralized partitions registry for initializing and caching dynamic partition definitions across all components.
+  - Added comprehensive unit tests for dynamic partition caching, configuration parsing, spec resolution, and asset translator integration.
 
 ### Fixed
 
