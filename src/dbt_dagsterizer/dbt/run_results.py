@@ -21,6 +21,7 @@ class DbtRunResult:
     status: str
     execution_time_s: float
     timing: list[DbtTiming]
+    rows_affected: int | None = None
 
 
 @dataclass(frozen=True)
@@ -74,7 +75,10 @@ def _timing_bounds_ns(timing: list[DbtTiming]) -> tuple[int | None, int | None]:
 def load_run_results(path: Path) -> list[DbtRunResult]:
     with path.open("r", encoding="utf-8") as f:
         data = json.load(f)
+    
+    return parse_run_results(data)
 
+def parse_run_results(data, success_only: bool = False) -> list[DbtRunResult]:
     results = data.get("results")
     if not isinstance(results, list):
         return []
@@ -88,11 +92,26 @@ def load_run_results(path: Path) -> list[DbtRunResult]:
             continue
         status = item.get("status")
         status_str = str(status or "")
+
+        if success_only and status_str not in {"success"}:
+            continue
+
         execution_time = item.get("execution_time")
         try:
             execution_time_s = float(execution_time or 0.0)
         except Exception:
             execution_time_s = 0.0
+
+        # Extract rows_affected from adapter_response if available
+        rows_affected = None
+        adapter_response = item.get("adapter_response")
+        if isinstance(adapter_response, dict):
+            rows = adapter_response.get("rows_affected")
+            if rows is not None:
+                try:
+                    rows_affected = int(rows)
+                except (ValueError, TypeError):
+                    pass
 
         timing_raw = item.get("timing") or []
         timing: list[DbtTiming] = []
@@ -117,6 +136,7 @@ def load_run_results(path: Path) -> list[DbtRunResult]:
                 status=status_str,
                 execution_time_s=execution_time_s,
                 timing=timing,
+                rows_affected=rows_affected,
             )
         )
 
@@ -189,6 +209,21 @@ def select_results_for_spans(
     merged = list(by_id.values())
     merged.sort(key=lambda x: (x.unique_id))
     return merged
+
+
+def get_row_counts_by_unique_id(
+    results: list[DbtRunResult],
+) -> dict[str, int]:
+    """Extract row counts from dbt run results, keyed by unique_id.
+    
+    Returns a dictionary mapping unique_id to rows_affected.
+    Only includes results where rows_affected is available.
+    """
+    row_counts: dict[str, int] = {}
+    for r in results:
+        if r.rows_affected is not None:
+            row_counts[r.unique_id] = r.rows_affected
+    return row_counts
 
 
 def env_dbt_run_results_top_n() -> int:

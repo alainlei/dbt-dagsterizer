@@ -1,0 +1,6 @@
+- Entry point: `src/dbt_dagsterizer/api.py` exposes `build_definitions()`, which aggregates assets, jobs, schedules, sensors, and resources into a single Dagster `Definitions` object.
+- Configuration: `src/dbt_dagsterizer/orchestration_config.py` manages the `dagsterization.yml` manifest, indexing model-to-partition mappings, job assignments, and partition-change propagation rules.
+- Asset Generation: `src/dbt_dagsterizer/assets/` uses `dagster-dbt` to wrap dbt models as Dagster assets, with custom translators for partitioning and observable source automation.
+- Job & Schedule Factories: `src/dbt_dagsterizer/jobs/` and `src/dbt_dagsterizer/schedules/` contain factory modules that dynamically create Dagster jobs and schedules based on the indexed orchestration configuration.
+- Sensor System: `src/dbt_dagsterizer/sensors/` implements partition-change detection and propagation sensors, using dbt manifest data to monitor upstream data freshness and trigger downstream jobs.
+- CLI: `src/dbt_dagsterizer/cli.py` provides a Click-based interface for initializing and validating the orchestration configuration and managing dbt manifests.

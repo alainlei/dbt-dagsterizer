@@ -2,7 +2,8 @@
 schema_version: 1
 locale: en-US
 branch: main
-exported_at: "2026-06-12T07:05:13Z"
+nodes_managed: true
+exported_at: "2026-06-23T03:10:24Z"
 modules:
     "":
         dir_name: dbt-to-Dagster Orchestration Automation

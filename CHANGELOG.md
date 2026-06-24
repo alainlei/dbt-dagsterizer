@@ -22,6 +22,11 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
   - Added partition change detector framework for dynamic partitions (watermark-based deduplication and change detection).
   - Created centralized partitions registry for initializing and caching dynamic partition definitions across all components.
   - Added comprehensive unit tests for dynamic partition caching, configuration parsing, spec resolution, and asset translator integration.
+- Added row count metadata for dbt assets to improve observability in Dagster UI:.
+  - Added `AssetObservation` events with `last_run_affected_row_count` metadata showing rows inserted/updated in the current run.
+  - Added `AssetObservation` events with `dagster/row_count` metadata showing total table row count after materialization.
+  - Row count observations include partition context via `partition` parameter for partitioned assets.
+  - Created `get_row_counts_from_starrocks()` helper in `dbt/row_counts.py` for direct database queries using relation metadata from manifest.
 
 ### Fixed
 

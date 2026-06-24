@@ -1,4 +1,3 @@
-- Factory functions named `build_*` or `get_*` return Dagster definitions (assets, jobs, sensors) by composing lower-level components and reading from the orchestration config.
-- Orchestration configuration (`dagsterization.yml`) is loaded, indexed, and validated against the dbt manifest before any Dagster definitions are constructed.
-- Dagster resources (dbt, starrocks) are instantiated via `make_*_resource` functions that read connection details from environment variables.
-- Partition specifications use a consistent string format ('daily', 'unpartitioned', 'dynamic:<name>') resolved by a central `get_partitions_def` utility.
+- Factory functions in `jobs/`, `schedules/`, and `sensors/` submodules return lists of Dagster definitions, which are aggregated by top-level `get_*()` functions in their respective `__init__.py` files.
+- Orchestration configuration is loaded and indexed via `orchestration_config.py` helpers (`load_or_create`, `index`) before being passed to factory functions for spec resolution.
+- Dbt manifest data is accessed via shared utilities in `dbt/manifest.py` and `assets/dbt/prepare.py` to ensure consistent state across asset, sensor, and automation modules.

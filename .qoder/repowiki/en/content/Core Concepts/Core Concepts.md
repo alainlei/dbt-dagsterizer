@@ -2,9 +2,10 @@
 
 <cite>
 **Referenced Files in This Document**
-- [README.md](file://README.md)
+- [README.md](file://docs/README.md)
 - [docs/concepts/overview.md](file://docs/concepts/overview.md)
 - [docs/concepts/execution-model.md](file://docs/concepts/execution-model.md)
+- [docs/concepts/dagsterization-yml.md](file://docs/concepts/dagsterization-yml.md)
 - [src/dbt_dagsterizer/api.py](file://src/dbt_dagsterizer/api.py)
 - [src/dbt_dagsterizer/__init__.py](file://src/dbt_dagsterizer/__init__.py)
 - [src/dbt_dagsterizer/env_utils.py](file://src/dbt_dagsterizer/env_utils.py)
@@ -21,6 +22,14 @@
 - [src/dbt_dagsterizer/sensors/partition_change/propagator/factory.py](file://src/dbt_dagsterizer/sensors/partition_change/propagator/factory.py)
 </cite>
 
+## Update Summary
+**Changes Made**
+- Added comprehensive coverage of `dagsterization.yml` as a core concept alongside `dbt_project.yml`
+- Updated orchestration intent section to emphasize the dual-file approach
+- Enhanced documentation of the single source of truth principle
+- Added detailed explanation of the relationship between dbt_project.yml and dagsterization.yml
+- Expanded partition strategies and orchestration configuration sections
+
 ## Table of Contents
 1. [Introduction](#introduction)
 2. [Project Structure](#project-structure)
@@ -33,14 +42,14 @@
 9. [Conclusion](#conclusion)
 
 ## Introduction
-This document explains the core concepts and architectural principles of dbt-dagsterizer. It focuses on how dbt manifests drive asset generation, how orchestration intent is declared via a YAML configuration, and how the system maintains a mostly-static code location while dynamically generating Dagster assets, jobs, schedules, and sensors. It also covers environment propagation in Kubernetes, partition strategies, observable sources, and the relationship between dbt metadata and Dagster definitions.
+This document explains the core concepts and architectural principles of dbt-dagsterizer. It focuses on how dbt manifests drive asset generation, how orchestration intent is declared via YAML configuration files, and how the system maintains a mostly-static code location while dynamically generating Dagster assets, jobs, schedules, and sensors. The system operates on two complementary YAML files: `dbt_project.yml` (dbt metadata) and `dagsterization.yml` (Dagster orchestration intent), which together form the single source of truth for pipeline configuration.
 
 ## Project Structure
 At a high level, dbt-dagsterizer exposes:
 - An API to build Dagster Definitions from a dbt project
 - Utilities to manage dbt manifest preparation and caching
 - Asset generation backed by dbt manifest metadata
-- Orchestration configuration via a dedicated YAML file
+- Dual-file orchestration configuration via dbt_project.yml and dagsterization.yml
 - Sensors for partition-change detection and propagation
 - Environment utilities for dot-env loading and temporary environment overrides
 
@@ -58,6 +67,8 @@ A --> J["resources/dbt.py<br/>Dbt project/profiles discovery"]
 A --> K["env_utils.py<br/>temporary_env & dotenv parsing"]
 A --> L["orchestration_config.py<br/>dagsterization.yml loader/indexer"]
 B --> M["assets/sources/automation.py<br/>observable sources"]
+L --> N["dbt_project.yml<br/>dbt metadata"]
+L --> O["dagsterization.yml<br/>Dagster orchestration intent"]
 ```
 
 **Diagram sources**
@@ -75,26 +86,28 @@ B --> M["assets/sources/automation.py<br/>observable sources"]
 - [src/dbt_dagsterizer/assets/sources/automation.py:15-47](file://src/dbt_dagsterizer/assets/sources/automation.py#L15-L47)
 
 **Section sources**
-- [README.md:1-101](file://README.md#L1-L101)
-- [docs/concepts/overview.md:1-56](file://docs/concepts/overview.md#L1-L56)
+- [README.md:1-25](file://docs/README.md#L1-L25)
+- [docs/concepts/overview.md:1-57](file://docs/concepts/overview.md#L1-L57)
 
 ## Core Components
-- Manifest-driven asset generation: dbt manifest is the stable interface. AssetKey is relation-based and stable across code locations referencing the same physical table. Group names derive from dbt resource metadata.
-- Orchestration intent: a single YAML file declares partitions, jobs, schedules, and partition-change detectors/propagators.
-- Always-loadable definitions: when no dbt models exist, a minimal Definitions is returned so code locations remain importable.
-- Environment propagation: dot-env files are parsed and temporarily injected; Kubernetes run pods can receive credentials via tags on jobs.
+- **Manifest-driven asset generation**: dbt manifest is the stable interface. AssetKey is relation-based and stable across code locations referencing the same physical table. Group names derive from dbt resource metadata.
+- **Dual-file orchestration**: Two complementary YAML files form the single source of truth:
+  - `dbt_project.yml`: dbt metadata and project configuration
+  - `dagsterization.yml`: Dagster orchestration intent and pipeline configuration
+- **Always-loadable definitions**: when no dbt models exist, a minimal Definitions is returned so code locations remain importable.
+- **Environment propagation**: dot-env files are parsed and temporarily injected; Kubernetes run pods can receive credentials via tags on jobs.
 
 **Section sources**
-- [docs/concepts/overview.md:11-56](file://docs/concepts/overview.md#L11-L56)
+- [docs/concepts/overview.md:11-57](file://docs/concepts/overview.md#L11-L57)
+- [docs/concepts/dagsterization-yml.md:1-636](file://docs/concepts/dagsterization-yml.md#L1-L636)
 - [src/dbt_dagsterizer/api.py:15-72](file://src/dbt_dagsterizer/api.py#L15-L72)
 - [src/dbt_dagsterizer/env_utils.py:44-78](file://src/dbt_dagsterizer/env_utils.py#L44-L78)
-- [README.md:63-80](file://README.md#L63-L80)
 
 ## Architecture Overview
-The system centers on a manifest-first approach:
+The system centers on a manifest-first approach with dual-file orchestration:
 - dbt manifest is prepared and cached
 - Assets are generated from the manifest using a translator
-- Orchestration configuration augments behavior (partitions, jobs, schedules, partition-change sensors)
+- Both dbt_project.yml and dagsterization.yml orchestration configuration augment behavior
 - Sensors evaluate in the code-server environment and emit RunRequests; jobs execute in run pods
 
 ```mermaid
@@ -104,6 +117,7 @@ participant API as "build_definitions()"
 participant Assets as "get_dbt_assets()"
 participant Prep as "ensure_manifest()"
 participant Trans as "LubanDagsterDbtTranslator"
+participant DbtCfg as "dbt_project.yml"
 participant Orch as "dagsterization.yml"
 participant Jobs as "Jobs/Sensors"
 User->>API : call build_definitions()
@@ -111,6 +125,7 @@ API->>Assets : get_assets()/get_jobs()/get_schedules()/get_sensors()
 Assets->>Prep : prepare manifest if missing
 Prep-->>Assets : manifest.json ready
 Assets->>Trans : translate dbt nodes to Dagster assets
+Assets->>DbtCfg : read dbt metadata
 Assets->>Orch : read partitions/jobs/schedules
 Assets-->>API : Definitions(assets, jobs, schedules, sensors, resources)
 API-->>User : Definitions
@@ -128,7 +143,7 @@ Jobs-->>User : periodic/sensor-triggered runs
 
 ### Manifest Processing and Asset Generation
 - Manifest preparation: ensures target/manifest.json exists and is up-to-date based on .env timestamps and target selection.
-- Asset generation: uses dagster-dbt’s dbt_assets decorator with a custom translator to map dbt nodes to Dagster assets.
+- Asset generation: uses dagster-dbt's dbt_assets decorator with a custom translator to map dbt nodes to Dagster assets.
 - Relation-based AssetKey: stable across code locations; group names derive from dbt resource metadata.
 
 ```mermaid
@@ -176,17 +191,17 @@ class LubanDagsterDbtTranslator {
 - [src/dbt_dagsterizer/assets/dbt/translator.py:12-116](file://src/dbt_dagsterizer/assets/dbt/translator.py#L12-L116)
 - [src/dbt_dagsterizer/partitions.py:10-21](file://src/dbt_dagsterizer/partitions.py#L10-L21)
 
-### Orchestration Intent via YAML
-- The YAML file (default path: dagsterization.yml) defines:
-  - Partitions: daily or unpartitioned per model
-  - Jobs: model lists, include_upstream flag, partitioning
-  - Schedules: daily_at with offset_days and lookback_days
-  - Partition-change detectors and propagators: configuration for watermark detection and downstream propagation
-- Indexing validates uniqueness and builds lookup maps for jobs and partitions.
+### Dual-File Orchestration: dbt_project.yml and dagsterization.yml
+- **dbt_project.yml**: Contains dbt metadata, project configuration, and model definitions
+- **dagsterization.yml**: Contains Dagster orchestration intent, partitioning strategies, job definitions, schedules, and partition-change sensors
+- **Single source of truth**: Together these files provide complete pipeline configuration
+- **Separation of concerns**: dbt handles data modeling, Dagster handles orchestration and execution
 
 ```mermaid
 flowchart TD
-Load["load_or_create(dagsterization.yml)"] --> Index["index() partitions/jobs"]
+DbtYml["dbt_project.yml<br/>dbt metadata & config"] --> Load["load_or_create()"]
+DagYml["dagsterization.yml<br/>Dagster orchestration"] --> Load
+Load --> Index["index() partitions/jobs"]
 Index --> Part["partitions_by_model"]
 Index --> AJ["asset_job_models"]
 Index --> GJ["group_job_by_model"]
@@ -202,6 +217,7 @@ GJ --> Jobs
 
 **Section sources**
 - [src/dbt_dagsterizer/orchestration_config.py:19-370](file://src/dbt_dagsterizer/orchestration_config.py#L19-L370)
+- [docs/concepts/dagsterization-yml.md:1-636](file://docs/concepts/dagsterization-yml.md#L1-L636)
 
 ### Execution Model and Environment Propagation
 - Evaluation vs execution:
@@ -285,6 +301,8 @@ ASSETS --> AUTOM["assets/sources/automation.py"]
 MANPREP --> MINPUT["manifest_inputs.py"]
 ORCH --> SDET["sensors/partition_change/detector/factory.py"]
 ORCH --> SPROP["sensors/partition_change/propagator/factory.py"]
+ORCH --> DBTYML["dbt_project.yml"]
+ORCH --> DAGYML["dagsterization.yml"]
 ```
 
 **Diagram sources**
@@ -311,14 +329,15 @@ ORCH --> SPROP["sensors/partition_change/propagator/factory.py"]
 - Partition-change detectors and propagators minimize unnecessary runs by tracking cursors and watermarks.
 - Using relation-based AssetKeys reduces rework when moving assets across code locations.
 
-[No sources needed since this section provides general guidance]
-
 ## Troubleshooting Guide
 - Manifest not found or outdated:
   - Ensure DBT_PROJECT_DIR and DBT_PROFILES_DIR are set or discoverable
   - Confirm .env files exist and are parsed; manifest refresh depends on .env timestamps
 - Missing dbt_project.yml:
   - Set LUBAN_REPO_ROOT or DBT_PROJECT_DIR appropriately
+- Missing dagsterization.yml:
+  - Initialize with `dbt-dagsterizer meta init` or create manually
+  - Both files are required for complete orchestration
 - Kubernetes run pod credentials:
   - Configure LUBAN_RUN_ENV_CONFIGMAP/LUBAN_RUN_ENV_SECRET on the code-server Deployment to inject envFrom into run pods
 - Partition-change sensors:
@@ -333,4 +352,4 @@ ORCH --> SPROP["sensors/partition_change/propagator/factory.py"]
 - [src/dbt_dagsterizer/sensors/partition_change/detector/factory.py:108-127](file://src/dbt_dagsterizer/sensors/partition_change/detector/factory.py#L108-L127)
 
 ## Conclusion
-dbt-dagsterizer aligns Dagster automation with dbt’s manifest, keeping code locations static while enabling dynamic generation of assets, jobs, schedules, and sensors. Orchestration intent is captured in a small, reviewable YAML file. The system emphasizes environment propagation clarity, partition strategies, and observable sources to build reliable, maintainable pipelines.
+dbt-dagsterizer aligns Dagster automation with dbt's manifest, keeping code locations static while enabling dynamic generation of assets, jobs, schedules, and sensors. The system operates on a dual-file orchestration approach where `dbt_project.yml` provides dbt metadata and `dagsterization.yml` provides Dagster orchestration intent, forming a single source of truth for pipeline configuration. The system emphasizes environment propagation clarity, partition strategies, and observable sources to build reliable, maintainable pipelines.
