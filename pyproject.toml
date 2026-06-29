@@ -11,6 +11,7 @@ dependencies = [
     "dagster-dbt>=0.26,<1",
     "dbt-core>=1.9,<2",
     "dbt-starrocks>=1.9,<2",
+    "dlt[mssql]>=1.0",
     "pymysql>=1.1.0",
     "ruamel-yaml>=0.19.1",
 ]

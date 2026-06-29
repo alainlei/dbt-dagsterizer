@@ -21,6 +21,7 @@ dependencies = [
 {% endif %}
     "dbt-core>=1.9,<2",
     "dbt-starrocks>=1.9,<2",
+    "dlt[mssql]>=1.0",
     "opentelemetry-sdk>=1.25,<2",
     "opentelemetry-exporter-otlp>=1.25,<2",
     "pymysql>=1.1.0",

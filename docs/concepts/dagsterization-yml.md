@@ -23,6 +23,7 @@ The file bridges dbt metadata (from `manifest.json`) with Dagster orchestration 
 - **Job definitions** (per-model asset jobs or grouped jobs)
 - **Schedules** (when jobs should run)
 - **Partition change sensors** (detectors and propagators for handling late arrivals)
+- **Replication** (optional StarRocks-to-SQL Server data replication via dlt)
 
 ## Top-Level Structure
 
@@ -52,6 +53,9 @@ schedules:                          # Schedule definitions
 partition_change:                   # Partition change detection
   detectors: []
   propagators: []
+replication:                        # Optional: StarRocks -> SQL Server replication
+  enabled: false
+  entries: []
 ```
 
 ---
@@ -438,6 +442,97 @@ dbt-dagsterizer meta partition-change propagator \
 
 ---
 
+## Replication
+
+Replication copies transformed dbt model data from StarRocks to Microsoft SQL Server using [dlt](https://dlthub.com) (Data Load Tool). It is an **optional** feature, disabled by default.
+
+### How it works
+
+1. Each replicated dbt model gets a **replication asset** (`replicate_<model>`) in the `replication` asset group
+2. The replication asset depends on the dbt model asset, so it executes **after** the dbt build completes
+3. For partitioned models, replication is **partition-aware**: only the materialized partition is copied (filtered by `partition_column`)
+4. For unpartitioned models, the entire table is copied
+5. dlt handles schema inference, data type mapping, and incremental loading
+
+### Configuration
+
+```yaml
+replication:
+  enabled: true
+  entries:
+    - model: orders
+      enabled: true
+      destination_table: orders
+      destination_schema: dbo
+      write_disposition: replace
+      partition_column: order_date
+```
+
+**Fields**:
+
+| Field | Description | Default |
+|-------|-------------|---------|
+| `model` | dbt model name to replicate (required) | — |
+| `enabled` | Whether this entry is active | `true` |
+| `destination_table` | Target table name in SQL Server | model name |
+| `destination_schema` | Target schema in SQL Server | `dbo` |
+| `write_disposition` | dlt write disposition: `append`, `replace`, or `merge` | `replace` |
+| `partition_column` | Column to filter by for partition-aware replication | (none) |
+
+**Global toggle**:
+
+- `replication.enabled` (bool, default: `false`): Master switch for the entire replication feature. When `false`, no replication assets or jobs are created.
+
+### Partition-Aware Replication
+
+When a dbt model is partitioned (daily or dynamic) and `partition_column` is set:
+
+- The replication asset uses the **same partition definition** as the dbt model
+- Only the materialized partition's data is copied (filtered via `WHERE partition_column = '<partition_key>'`)
+- This avoids full table scans on each partition materialization
+
+When `partition_column` is not set on a partitioned model, a **full table copy** is performed on each materialization (with a validation warning).
+
+### Write Dispositions
+
+The `write_disposition` field controls how data is loaded into SQL Server:
+
+- **`append`** (default): Appends new data to the existing table without modifying existing rows
+- **`replace`**: Truncates the table before loading, replacing all existing data
+- **`merge`**: Updates existing rows based on a primary key and inserts new rows (requires a merge key to be configured in dlt)
+
+**When to use each**:
+- Use `append` for incremental loads where you only add new records
+- Use `replace` for full refreshes or when the source is the complete truth
+- Use `merge` when you need to update existing records (e.g., correcting historical data)
+
+### SQL Server Connection
+
+SQL Server connection details are configured via environment variables (like StarRocks):
+
+```bash
+SQLSERVER_HOST=sqlserver.example.com
+SQLSERVER_PORT=1433
+SQLSERVER_USER=sa
+SQLSERVER_PASSWORD=********
+SQLSERVER_DATABASE=replication_target
+SQLSERVER_DRIVER="ODBC Driver 18 for SQL Server"
+```
+
+### CLI equivalent
+
+```bash
+dbt-dagsterizer meta replication entry \
+  --model orders \
+  --enabled \
+  --destination-table orders \
+  --destination-schema dbo \
+  --write-disposition replace \
+  --partition-column order_date
+```
+
+---
+
 ## Complete Example
 
 Here's a realistic `dagsterization.yml` for a multi-layer dbt project:
@@ -514,6 +609,17 @@ partition_change:
       minimum_interval_seconds: 30
       targets:
         - job_name: daily_facts_job
+
+# Optional: Replication to SQL Server
+replication:
+  enabled: false
+  entries:
+    - model: orders
+      enabled: true
+      destination_table: orders
+      destination_schema: dbo
+      write_disposition: replace
+      partition_column: order_date
 ```
 
 ```yaml
@@ -587,6 +693,14 @@ dbt-dagsterizer meta partition-change detector \
 dbt-dagsterizer meta partition-change propagator \
   --model orders \
   --targets daily_facts_job
+
+# Configure replication entry
+dbt-dagsterizer meta replication entry \
+  --model orders \
+  --enabled \
+  --destination-table orders \
+  --write-disposition replace \
+  --partition-column order_date
 
 # Validate
 dbt-dagsterizer meta validate

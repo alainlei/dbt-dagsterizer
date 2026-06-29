@@ -29,6 +29,7 @@ def test_build_definitions_minimal_dbt_project(tmp_path: Path):
     assert defs is not None
     assert "dbt" in defs.resources
     assert "starrocks" in defs.resources
+    assert "mssql" in defs.resources
 
     sensor_names = {s.name for s in defs.sensors}
     assert "default_automation_condition_sensor" in sensor_names

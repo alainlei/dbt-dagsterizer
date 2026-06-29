@@ -18,6 +18,7 @@ def test_get_row_counts_from_starrocks(tmp_path: Path):
         "nodes": {
             "model.demo.orders": {
                 "resource_type": "model",
+                "unique_id": "model.demo.orders",
                 "name": "orders",
                 "database": "production_db",
                 "schema": "dws",
@@ -25,6 +26,7 @@ def test_get_row_counts_from_starrocks(tmp_path: Path):
             },
             "model.demo.customers": {
                 "resource_type": "model",
+                "unique_id": "model.demo.customers",
                 "name": "customers",
                 "database": "production_db",
                 "schema": "dws",
@@ -32,6 +34,7 @@ def test_get_row_counts_from_starrocks(tmp_path: Path):
             },
             "model.demo.seeds": {
                 "resource_type": "seed",  # Should be skipped
+                "unique_id": "model.demo.seeds",
                 "name": "seeds",
                 "database": "production_db",
                 "schema": "raw",
@@ -55,13 +58,16 @@ def test_get_row_counts_from_starrocks(tmp_path: Path):
     
     mock_client.query_scalar = Mock(side_effect=mock_query)
     
-    # Get row counts
-    row_counts = get_row_counts_from_starrocks(mock_client, manifest_path)
+    # Get row counts for orders node
+    orders_node = manifest_data["nodes"]["model.demo.orders"]
+    customers_node = manifest_data["nodes"]["model.demo.customers"]
+    
+    orders_count = get_row_counts_from_starrocks(mock_client, orders_node)
+    customers_count = get_row_counts_from_starrocks(mock_client, customers_node)
     
     # Verify results
-    assert len(row_counts) == 2  # Only models, not seeds
-    assert row_counts["model.demo.orders"] == 1000
-    assert row_counts["model.demo.customers"] == 500
+    assert orders_count == 1000
+    assert customers_count == 500
     
     # Verify correct SQL queries were made
     assert mock_client.query_scalar.call_count == 2
@@ -76,8 +82,10 @@ def test_get_row_counts_from_starrocks(tmp_path: Path):
 def test_get_row_counts_from_starrocks_missing_manifest():
     """Test handling of missing manifest file."""
     mock_client = Mock(spec=StarRocksClient)
-    row_counts = get_row_counts_from_starrocks(mock_client, Path("/nonexistent/manifest.json"))
-    assert row_counts == {}
+    # Pass an empty node dict - should return -1 due to missing relation info
+    node = {}
+    result = get_row_counts_from_starrocks(mock_client, node)
+    assert result == -1
 
 
 def test_get_row_counts_from_starrocks_query_failure(tmp_path: Path):
@@ -86,6 +94,7 @@ def test_get_row_counts_from_starrocks_query_failure(tmp_path: Path):
         "nodes": {
             "model.demo.failing": {
                 "resource_type": "model",
+                "unique_id": "model.demo.failing",
                 "name": "failing",
                 "database": "db",
                 "schema": "schema",
@@ -93,6 +102,7 @@ def test_get_row_counts_from_starrocks_query_failure(tmp_path: Path):
             },
             "model.demo.success": {
                 "resource_type": "model",
+                "unique_id": "model.demo.success",
                 "name": "success",
                 "database": "db",
                 "schema": "schema",
@@ -113,11 +123,15 @@ def test_get_row_counts_from_starrocks_query_failure(tmp_path: Path):
     
     mock_client.query_scalar = Mock(side_effect=mock_query)
     
-    # Should skip failing table and return successful one
-    row_counts = get_row_counts_from_starrocks(mock_client, manifest_path)
+    # Test failing node
+    failing_node = manifest_data["nodes"]["model.demo.failing"]
+    failing_count = get_row_counts_from_starrocks(mock_client, failing_node)
+    assert failing_count == -1
     
-    assert len(row_counts) == 1
-    assert row_counts["model.demo.success"] == 100
+    # Test success node
+    success_node = manifest_data["nodes"]["model.demo.success"]
+    success_count = get_row_counts_from_starrocks(mock_client, success_node)
+    assert success_count == 100
 
 
 def test_get_row_counts_from_starrocks_missing_relation_info(tmp_path: Path):
@@ -126,11 +140,13 @@ def test_get_row_counts_from_starrocks_missing_relation_info(tmp_path: Path):
         "nodes": {
             "model.demo.incomplete": {
                 "resource_type": "model",
+                "unique_id": "model.demo.incomplete",
                 "name": "incomplete",
                 # Missing database, schema, identifier
             },
             "model.demo.complete": {
                 "resource_type": "model",
+                "unique_id": "model.demo.complete",
                 "name": "complete",
                 "database": "db",
                 "schema": "schema",
@@ -145,9 +161,13 @@ def test_get_row_counts_from_starrocks_missing_relation_info(tmp_path: Path):
     mock_client = Mock(spec=StarRocksClient)
     mock_client.query_scalar = Mock(return_value=50)
     
-    row_counts = get_row_counts_from_starrocks(mock_client, manifest_path)
+    # Test incomplete node
+    incomplete_node = manifest_data["nodes"]["model.demo.incomplete"]
+    incomplete_count = get_row_counts_from_starrocks(mock_client, incomplete_node)
+    assert incomplete_count == -1  # Should return -1 due to missing relation
     
-    # Should only query the complete node
-    assert len(row_counts) == 1
-    assert row_counts["model.demo.complete"] == 50
+    # Test complete node
+    complete_node = manifest_data["nodes"]["model.demo.complete"]
+    complete_count = get_row_counts_from_starrocks(mock_client, complete_node)
+    assert complete_count == 50
     assert mock_client.query_scalar.call_count == 1

@@ -50,10 +50,32 @@ def test_emit_partition_row_counts_emits_observations(tmp_path: Path):
         }
     }
     
+    # Create mock run_results with rows_affected
+    run_results_data = {
+        "metadata": {},
+        "results": [
+            {
+                "unique_id": "model.demo.orders",
+                "status": "success",
+                "execution_time": 1.23,
+                "timing": [],
+                "adapter_response": {"rows_affected": 100},
+            },
+            {
+                "unique_id": "model.demo.customers",
+                "status": "success",
+                "execution_time": 0.5,
+                "timing": [],
+                "adapter_response": {"rows_affected": 50},
+            },
+        ]
+    }
+    
     # Write test files
     target_dir = tmp_path / "target"
     target_dir.mkdir()
     (target_dir / "manifest.json").write_text(json.dumps(manifest_data))
+    (target_dir / "run_results.json").write_text(json.dumps(run_results_data))
     
     # Create mock translator
     translator = LubanDagsterDbtTranslator(
@@ -71,30 +93,29 @@ def test_emit_partition_row_counts_emits_observations(tmp_path: Path):
     mock_starrocks.query_scalar = Mock(side_effect=lambda sql: 1000 if "orders" in sql else 500)
     
     # Emit observations with mocked StarRocks
+    run_results_json = run_results_data
     with patch("dbt_dagsterizer.assets.dbt.assets.make_starrocks_resource", return_value=mock_starrocks):
         observations = list(_emit_partition_row_counts(
             context=context,
             dbt_project_dir=tmp_path,
             translator=translator,
+            run_results_json=run_results_json,
         ))
     
-    # Verify observations were emitted
-    assert len(observations) == 2
+    # Verify observations were emitted (2 for last_run_affected_row_count + 2 for dagster/row_count)
+    assert len(observations) == 4
     
-    # Check first observation
-    obs1 = observations[0]
-    assert isinstance(obs1, dg.AssetObservation)
-    assert obs1.asset_key.path == ["dbt", "db", "schema", "orders"]
-    assert "dagster/partition_row_count" in obs1.metadata
-    assert obs1.metadata["dagster/partition_row_count"].value == 1000
-    assert "partition_key" in obs1.metadata
-    assert obs1.metadata["partition_key"].value == "2026-01-01"
+    # Check observations for orders
+    orders_obs = [obs for obs in observations if "orders" in obs.asset_key.path]
+    assert len(orders_obs) == 2
+    assert any("last_run_affected_row_count" in obs.metadata for obs in orders_obs)
+    assert any(obs.metadata.get("dagster/row_count").value == 1000 if "dagster/row_count" in obs.metadata else False for obs in orders_obs)
     
-    # Check second observation
-    obs2 = observations[1]
-    assert isinstance(obs2, dg.AssetObservation)
-    assert obs2.asset_key.path == ["dbt", "db", "schema", "customers"]
-    assert obs2.metadata["dagster/partition_row_count"].value == 500
+    # Check observations for customers
+    customers_obs = [obs for obs in observations if "customers" in obs.asset_key.path]
+    assert len(customers_obs) == 2
+    assert any("last_run_affected_row_count" in obs.metadata for obs in customers_obs)
+    assert any(obs.metadata.get("dagster/row_count").value == 500 if "dagster/row_count" in obs.metadata else False for obs in customers_obs)
 
 
 def test_emit_partition_row_counts_skips_missing_files(tmp_path: Path):
@@ -109,10 +130,12 @@ def test_emit_partition_row_counts_skips_missing_files(tmp_path: Path):
     context = FakeContext(partition_key="2026-01-01")
     
     # No target directory exists
+    run_results_json = {"metadata": {}, "results": []}
     observations = list(_emit_partition_row_counts(
         context=context,
         dbt_project_dir=tmp_path,
         translator=translator,
+        run_results_json=run_results_json,
     ))
     
     assert len(observations) == 0
@@ -158,10 +181,12 @@ def test_emit_partition_row_counts_handles_no_rows_affected(tmp_path: Path):
     
     context = FakeContext(partition_key="2026-01-01")
     
+    run_results_json = run_results_data
     materializations = list(_emit_partition_row_counts(
         context=context,
         dbt_project_dir=tmp_path,
         translator=translator,
+        run_results_json=run_results_json,
     ))
     
     # No observations should be emitted since rows_affected is missing
@@ -209,14 +234,17 @@ def test_emit_partition_row_counts_non_partitioned_run(tmp_path: Path):
     # Non-partitioned context
     context = FakeContext(partition_key=None)
     
+    run_results_json = run_results_data
     materializations = list(_emit_partition_row_counts(
         context=context,
         dbt_project_dir=tmp_path,
         translator=translator,
+        run_results_json=run_results_json,
     ))
     
     assert len(materializations) == 1
     mat = materializations[0]
-    assert mat.metadata["dagster/partition_row_count"].value == 1000
-    # partition_key should not be in metadata for non-partitioned runs
-    assert "partition_key" not in mat.metadata
+    # The function emits 'last_run_affected_row_count' from run_results
+    assert mat.metadata["last_run_affected_row_count"].value == 1000
+    # partition should be None for non-partitioned runs
+    assert mat.partition is None

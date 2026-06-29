@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, MutableMapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +13,17 @@ class DynamicPartitionConfig:
     """Configuration for a dynamic partition definition."""
     name: str
     initial_partition_keys: list[str]
+
+
+@dataclass(frozen=True)
+class ReplicationEntry:
+    """Configuration for a single replication entry (StarRocks -> SQL Server)."""
+    model: str
+    enabled: bool
+    destination_table: str
+    destination_schema: str
+    write_disposition: str
+    partition_column: str | None
 
 
 def _yaml() -> YAML:
@@ -37,6 +48,7 @@ def load_or_create(path: Path) -> MutableMapping[str, Any]:
             "partitions": {},
             "schedules": {},
             "partition_change": {"detectors": [], "propagators": []},
+            "replication": {"enabled": False, "entries": []},
         }
 
     with path.open("r", encoding="utf-8") as f:
@@ -49,6 +61,7 @@ def load_or_create(path: Path) -> MutableMapping[str, Any]:
             "partitions": {},
             "schedules": {},
             "partition_change": {"detectors": [], "propagators": []},
+            "replication": {"enabled": False, "entries": []},
         }
     if not isinstance(data, MutableMapping):
         raise ValueError(f"Orchestration config must be a mapping: {path}")
@@ -71,6 +84,18 @@ def load_or_create(path: Path) -> MutableMapping[str, Any]:
             if "propagators" not in pc and "propagations" in pc:
                 pc["propagators"] = pc.get("propagations")
                 del pc["propagations"]
+
+    if "replication" not in data:
+        data["replication"] = {"enabled": False, "entries": []}
+    else:
+        repl = data.get("replication")
+        if isinstance(repl, MutableMapping):
+            if "enabled" not in repl:
+                repl["enabled"] = False
+            if "entries" not in repl:
+                repl["entries"] = []
+        else:
+            data["replication"] = {"enabled": False, "entries": []}
 
     return data
 
@@ -116,6 +141,8 @@ class OrchestrationIndex:
     asset_job_models: set[str]
     group_job_by_model: dict[str, str]
     daily_include_current_day_partition: bool = False  # DailyPartitionsDefinition end_offset from daily_config (true -> end_offset=1)
+    replication_enabled: bool = False
+    replication_entries: dict[str, ReplicationEntry] = field(default_factory=dict)  # model_name -> config
 
 
 def index(data: Mapping[str, Any]) -> OrchestrationIndex:
@@ -195,12 +222,43 @@ def index(data: Mapping[str, Any]) -> OrchestrationIndex:
                     raise ValueError(f"Model '{name}' appears in multiple jobs: '{group_job_by_model[name]}' and '{job_name}'")
                 group_job_by_model[name] = job_name
 
+    replication_enabled = False
+    replication_entries: dict[str, ReplicationEntry] = {}
+    repl = data.get("replication")
+    if isinstance(repl, Mapping):
+        raw_enabled = repl.get("enabled")
+        if isinstance(raw_enabled, bool):
+            replication_enabled = raw_enabled
+        entries = repl.get("entries")
+        if isinstance(entries, list):
+            for entry in entries:
+                if not isinstance(entry, Mapping):
+                    continue
+                model = entry.get("model")
+                if not isinstance(model, str) or not model.strip():
+                    continue
+                model = model.strip()
+                replication_entries[model] = ReplicationEntry(
+                    model=model,
+                    enabled=bool(entry.get("enabled", True)),
+                    destination_table=str(entry.get("destination_table") or model),
+                    destination_schema=str(entry.get("destination_schema") or "dbo"),
+                    write_disposition=str(entry.get("write_disposition") or "replace"),
+                    partition_column=(
+                        str(entry.get("partition_column")).strip()
+                        if isinstance(entry.get("partition_column"), str) and entry.get("partition_column").strip()
+                        else None
+                    ),
+                )
+
     return OrchestrationIndex(
         partitions_by_model=partitions_by_model,
         dynamic_partitions=dynamic_partitions,
         asset_job_models=asset_job_models,
         group_job_by_model=group_job_by_model,
         daily_include_current_day_partition=daily_include_current_day_partition,
+        replication_enabled=replication_enabled,
+        replication_entries=replication_entries,
     )
 
 
@@ -467,6 +525,57 @@ def set_partition_change_propagation(
 
     propagations_filtered.append(entry)
     pc["propagators"] = propagations_filtered
+
+
+def set_replication_entry(
+    *,
+    data: MutableMapping[str, Any],
+    model: str,
+    enabled: bool,
+    destination_table: str | None,
+    destination_schema: str | None,
+    write_disposition: str | None,
+    partition_column: str | None,
+) -> None:
+    """Add or update a replication entry for a dbt model.
+
+    Args:
+        data: Orchestration config dict
+        model: dbt model name to replicate
+        enabled: Whether this replication entry is active
+        destination_table: Target table name in SQL Server (default: model name)
+        destination_schema: Target schema in SQL Server (default: dbo)
+        write_disposition: dlt write disposition - "append", "replace", or "merge" (default: replace)
+        partition_column: Column to filter by for partition-aware replication (optional)
+    """
+    model = model.strip()
+    if not model:
+        raise ValueError("replication entry model must be non-empty")
+    if write_disposition is not None and write_disposition not in {"append", "replace", "merge"}:
+        raise ValueError('replication entry write_disposition must be "append", "replace", or "merge"')
+
+    repl = _ensure_mapping(data, "replication")
+    entries = _ensure_list(repl, "entries")
+
+    entries_filtered: list[dict[str, Any]] = []
+    for e in entries:
+        if isinstance(e, Mapping) and e.get("model") == model:
+            continue
+        if isinstance(e, dict):
+            entries_filtered.append(e)
+
+    entry: dict[str, Any] = {
+        "model": model,
+        "enabled": bool(enabled),
+    }
+    entry["destination_table"] = destination_table.strip() if destination_table and destination_table.strip() else model
+    entry["destination_schema"] = destination_schema.strip() if destination_schema and destination_schema.strip() else "dbo"
+    entry["write_disposition"] = write_disposition.strip() if write_disposition and write_disposition.strip() else "replace"
+    if partition_column and partition_column.strip():
+        entry["partition_column"] = partition_column.strip()
+
+    entries_filtered.append(entry)
+    repl["entries"] = entries_filtered
 
 
 def set_dynamic_partition(

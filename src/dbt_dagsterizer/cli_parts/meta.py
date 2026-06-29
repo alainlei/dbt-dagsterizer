@@ -42,6 +42,9 @@ from ..orchestration_config import (
     set_partition_change_propagation as orch_set_propagation,
 )
 from ..orchestration_config import (
+    set_replication_entry as orch_set_replication_entry,
+)
+from ..orchestration_config import (
     set_schedule as orch_set_schedule,
 )
 from .common import orchestration_path, resolve_dir_arg, select_models, split_csv
@@ -593,6 +596,75 @@ def build_meta_group() -> click.Group:
             prepare=prepare,
             parse=parse,
         )
+
+    @meta.group("replication")
+    def meta_replication() -> None:
+        """Configure StarRocks-to-SQL Server replication via dlt."""
+        pass
+
+    @meta_replication.command("entry")
+    @click.option("--dbt-project-dir", default="./dbt_project", show_default=True)
+    @click.option("--path", "path_", default="dagsterization.yml", show_default=True)
+    @click.option("--model", required=True, help="dbt model name to replicate")
+    @click.option("--enabled/--disabled", default=True, show_default=True)
+    @click.option("--destination-table", default="", help="Target table in SQL Server (default: model name)")
+    @click.option("--destination-schema", default="", help="Target schema in SQL Server (default: dbo)")
+    @click.option(
+        "--write-disposition",
+        default="replace",
+        show_default=True,
+        type=click.Choice(["append", "replace", "merge"], case_sensitive=False),
+        help="dlt write disposition",
+    )
+    @click.option(
+        "--partition-column",
+        default="",
+        help="Column to filter by for partition-aware replication (required for partitioned models)",
+    )
+    @click.option("--prepare/--no-prepare", default=True, show_default=True)
+    @click.option("--parse/--no-parse", default=False, show_default=True)
+    def meta_replication_entry(
+        dbt_project_dir: str,
+        path_: str,
+        model: str,
+        enabled: bool,
+        destination_table: str,
+        destination_schema: str,
+        write_disposition: str,
+        partition_column: str,
+        prepare: bool,
+        parse: bool,
+    ) -> None:
+        dbt_project_path = resolve_dir_arg(dbt_project_dir)
+        if not dbt_project_path.exists():
+            raise click.ClickException(f"dbt project dir does not exist: {dbt_project_path}")
+
+        target = orchestration_path(dbt_project_dir=dbt_project_path, path_=path_)
+        data = load_orch(target)
+
+        # Ensure replication is enabled when adding an entry
+        repl = data.setdefault("replication", {})
+        repl["enabled"] = True
+
+        orch_set_replication_entry(
+            data=data,
+            model=model,
+            enabled=enabled,
+            destination_table=destination_table or None,
+            destination_schema=destination_schema or None,
+            write_disposition=write_disposition,
+            partition_column=partition_column or None,
+        )
+        save_orchestration_with_validation(
+            target=target, data=data, dbt_project_dir=dbt_project_path, prepare=prepare
+        )
+        if parse:
+            run_dbt_parse(
+                dbt_project_dir=dbt_project_path,
+                dbt_profiles_dir=dbt_project_path,
+                dbt_target=_default_dbt_target(),
+            )
+        click.echo(str(target))
 
     @meta.command("validate")
     @click.option("--dbt-project-dir", default="./dbt_project", show_default=True)

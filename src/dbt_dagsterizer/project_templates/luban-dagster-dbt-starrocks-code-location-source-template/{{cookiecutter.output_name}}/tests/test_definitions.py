@@ -20,6 +20,7 @@ def test_definitions_load():
 
     assert "starrocks" in defs.resources
     assert "dbt" in defs.resources
+    assert "mssql" in defs.resources
 
     sensor_names = {s.name for s in defs.sensors}
     repo_root = Path(__file__).resolve().parents[1]
