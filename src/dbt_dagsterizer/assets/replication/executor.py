@@ -74,6 +74,9 @@ def execute_replication(
         f"?driver={driver_encoded}&TrustServerCertificate=yes&Encrypt=no"
     )
 
+    log.info("Source credentials: %s", source_credentials.replace(starrocks_client.password, "***"))
+    log.info("Destination credentials: %s", mssql_credentials.replace(mssql_client.password, "***"))
+
     # Create dlt pipeline targeting SQL Server
     pipeline = dlt.pipeline(
         pipeline_name=f"replicate_{spec['model']}",
@@ -82,35 +85,67 @@ def execute_replication(
     )
 
     # Build the source from StarRocks
-    source = sql_database(
-        credentials=source_credentials,
-        table_names=[source_table],
-        reflection_level="minimal",
-    )
+    log.info("Reading source table '%s.%s' from StarRocks", source_database, source_table)
 
-    resource = source.resources[source_table]
-
-    # Tell dlt to rename the source table to the destination table
-    resource.apply_hints(
-        table_name=destination_table,
-    )
-
-    # Apply partition filter when partition-aware
     if partition_column and partition_key:
-        resource.apply_hints(
-            incremental=dlt.sources.incremental(
-                cursor_path=partition_column,
-                initial_value=partition_key,
-                end_value=partition_key,
-            ),
+        # Partition-aware: use custom filtered resource via SQLAlchemy
+        log.info("Partition-aware replication: filtering %s = '%s' via SQL WHERE clause", partition_column, partition_key)
+        import sqlalchemy as sa
+
+        @dlt.resource(name=destination_table, write_disposition=write_disposition)
+        def _filtered_resource():
+            engine = sa.create_engine(source_credentials)
+            with engine.connect() as conn:
+                result = conn.execute(
+                    sa.text(f"SELECT * FROM {source_table} WHERE {partition_column} = :pk"),
+                    {"pk": partition_key},
+                )
+                columns = list(result.keys())
+                for row in result:
+                    yield dict(zip(columns, row))
+
+        resource = _filtered_resource
+    else:
+        # No partition filter: use standard sql_database source
+        source = sql_database(
+            credentials=source_credentials,
+            table_names=[source_table],
+            reflection_level="minimal",
         )
-        log.info("Partition-aware replication: filtering %s = %s", partition_column, partition_key)
+        resource = source.resources[source_table]
+        resource.apply_hints(table_name=destination_table)
 
     # Execute the pipeline
+    log.info(
+        "Running dlt pipeline: destination_table=%s, destination_schema=%s, write_disposition=%s",
+        destination_table,
+        destination_schema,
+        write_disposition,
+    )
     load_info = pipeline.run(
         resource,
         table_name=destination_table,
         write_disposition=write_disposition,
     )
 
-    log.info("Replication completed: %s rows loaded", load_info)
+    # Log detailed load information
+    total_rows = 0
+    if load_info and hasattr(load_info, "load_packages"):
+        for package in load_info.load_packages:
+            for table in package.jobs.get("completed_jobs", []):
+                row_count = getattr(table, "row_count", 0) or 0
+                total_rows += row_count
+                log.info(
+                    "Loaded table '%s': %s rows (job: %s)",
+                    getattr(table, "table_name", "unknown"),
+                    row_count,
+                    getattr(table, "job_id", "unknown"),
+                )
+
+    log.info("Replication completed: total_rows=%s, load_info=%s", total_rows, load_info)
+
+    if total_rows == 0:
+        log.warning(
+            "No rows were replicated. Possible causes: source table is empty, "
+            "partition filter too restrictive, or connection issue."
+        )

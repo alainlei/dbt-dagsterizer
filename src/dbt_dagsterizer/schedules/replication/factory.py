@@ -1,10 +1,13 @@
 """Build Dagster schedule definitions for replication jobs."""
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import dagster as dg
+
+logger = logging.getLogger(__name__)
 
 from ...orchestration_config import (
     default_orchestration_path,
@@ -77,7 +80,6 @@ def build_replication_schedules(schedule_specs: list[dict]) -> list:
                 name=schedule_name,
                 cron_schedule=cron_schedule,
                 job=job,
-                partitions_def=partitions_def,
                 default_status=default_status,
             )
             def _daily_schedule(context):
@@ -93,7 +95,6 @@ def build_replication_schedules(schedule_specs: list[dict]) -> list:
                 name=schedule_name,
                 cron_schedule=cron_schedule,
                 job=job,
-                partitions_def=partitions_def,
                 default_status=default_status,
             )
             def _dynamic_schedule(context):

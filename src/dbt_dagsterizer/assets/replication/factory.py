@@ -82,6 +82,7 @@ def build_replication_assets(specs: list[dict]) -> list[dg.AssetsDefinition]:
                 deps=[_dep_key],
                 partitions_def=_partitions_def,
                 group_name="replication",
+                automation_condition=dg.AutomationCondition.eager(),
             )
             def _replication_asset(context):
                 execute_replication(

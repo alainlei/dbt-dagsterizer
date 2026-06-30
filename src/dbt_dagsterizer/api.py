@@ -62,9 +62,12 @@ def build_definitions(
         from .schedules import get_schedules
         from .sensors import get_sensors
 
+        # Build jobs first to ensure they're cached before schedules reference them
+        jobs = get_jobs()
+
         return Definitions(
             assets=get_assets(),
-            jobs=get_jobs(),
+            jobs=jobs,
             schedules=get_schedules(),
             sensors=get_sensors(),
             resources=get_resources(),

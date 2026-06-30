@@ -18,7 +18,7 @@ def build_auto_replication_job_specs() -> list[dict]:
     for spec in asset_specs:
         job_specs.append(
             {
-                "name": f"{spec['name']}_job",
+                "name": f"{spec['name']}_job",  # Add _job suffix to avoid conflicts with __ASSET_JOB
                 "asset_key": spec["name"],
                 "partition_type": spec.get("partition_type", "unpartitioned"),
             }
