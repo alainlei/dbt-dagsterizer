@@ -135,7 +135,7 @@ def generate_gitops_env(
     config_name = f"{k8s_name}-config"
     secret_name = f"{k8s_name}-secret"
 
-    secret_keys = ["STARROCKS_PASSWORD"]
+    secret_keys = ["STARROCKS_PASSWORD", "SSRS_DB_PASSWORD"]
 
     denied_prefixes = ("OTEL_",)
     denied_keys = {
@@ -144,6 +144,7 @@ def generate_gitops_env(
         "DAGSTER_HOME",
         "LUBAN_REPO_ROOT",
         "STARROCKS_PASSWORD",
+        "SSRS_DB_PASSWORD",
     }
 
     base_data: dict[str, str] = {"APP_ENV": "base", "DAGSTER_HOME": dagster_home}

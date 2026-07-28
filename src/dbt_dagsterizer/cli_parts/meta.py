@@ -16,9 +16,11 @@ from ..dbt.manifest_prepare import (
 )
 from ..orchestration_config import (
     delete_group_job,
+    delete_ssrs_report,
     derive_job_name_for_model,
     resolve_orchestration_path,
     set_group_job,
+    set_ssrs_report,
 )
 from ..orchestration_config import (
     index as index_orch,
@@ -651,6 +653,62 @@ def build_meta_group() -> click.Group:
             dbt_project_dir=dbt_project_path,
             prepare=prepare,
         )
+        click.echo(str(target))
+
+    @meta.command("report")
+    @click.option("--dbt-project-dir", default="./dbt_project", show_default=True)
+    @click.option("--path", "path_", default="dagsterization.yml", show_default=True)
+    @click.option("--name", required=True, help="Report identifier (unique per project)")
+    @click.option("--model", required=True, help="dbt model whose materialization triggers the report")
+    @click.option("--subscription-description", required=True, help="SSRS subscription description used to look up its SQL Server Agent job")
+    @click.option("--enabled/--disabled", default=True, show_default=True)
+    @click.option("--prepare/--no-prepare", default=True, show_default=True)
+    def meta_report(
+        dbt_project_dir: str,
+        path_: str,
+        name: str,
+        model: str,
+        subscription_description: str,
+        enabled: bool,
+        prepare: bool,
+    ) -> None:
+        """Configure an SSRS subscription trigger after a dbt model materializes."""
+        dbt_project_path = resolve_dir_arg(dbt_project_dir)
+        if not dbt_project_path.exists():
+            raise click.ClickException(f"dbt project dir does not exist: {dbt_project_path}")
+
+        target = orchestration_path(dbt_project_dir=dbt_project_path, path_=path_)
+        data = load_orch(target)
+        set_ssrs_report(
+            data=data,
+            name=name,
+            model=model,
+            subscription_description=subscription_description,
+            enabled=enabled,
+        )
+        save_orchestration_with_validation(target=target, data=data, dbt_project_dir=dbt_project_path, prepare=prepare)
+        click.echo(str(target))
+
+    @meta.command("report-delete")
+    @click.option("--dbt-project-dir", default="./dbt_project", show_default=True)
+    @click.option("--path", "path_", default="dagsterization.yml", show_default=True)
+    @click.option("--name", required=True)
+    @click.option("--prepare/--no-prepare", default=True, show_default=True)
+    def meta_report_delete(
+        dbt_project_dir: str,
+        path_: str,
+        name: str,
+        prepare: bool,
+    ) -> None:
+        dbt_project_path = resolve_dir_arg(dbt_project_dir)
+        if not dbt_project_path.exists():
+            raise click.ClickException(f"dbt project dir does not exist: {dbt_project_path}")
+
+        target = orchestration_path(dbt_project_dir=dbt_project_path, path_=path_)
+        data = load_orch(target)
+        if not delete_ssrs_report(data=data, name=name):
+            raise click.ClickException(f"Report not found: {name}")
+        save_orchestration_with_validation(target=target, data=data, dbt_project_dir=dbt_project_path, prepare=prepare)
         click.echo(str(target))
 
     return meta

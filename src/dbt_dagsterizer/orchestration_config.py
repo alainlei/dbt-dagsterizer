@@ -50,6 +50,7 @@ def load_or_create(path: Path) -> MutableMapping[str, Any]:
             "partitions": {},
             "schedules": {},
             "partition_change": {"detectors": [], "propagators": []},
+            "ssrs_reports": [],
         }
 
     with path.open("r", encoding="utf-8") as f:
@@ -63,6 +64,7 @@ def load_or_create(path: Path) -> MutableMapping[str, Any]:
             "partitions": {},
             "schedules": {},
             "partition_change": {"detectors": [], "propagators": []},
+            "ssrs_reports": [],
         }
     if not isinstance(data, MutableMapping):
         raise ValueError(f"Orchestration config must be a mapping: {path}")
@@ -87,6 +89,8 @@ def load_or_create(path: Path) -> MutableMapping[str, Any]:
             if "propagators" not in pc and "propagations" in pc:
                 pc["propagators"] = pc.get("propagations")
                 del pc["propagations"]
+    if "ssrs_reports" not in data:
+        data["ssrs_reports"] = []
 
     return data
 
@@ -393,6 +397,58 @@ def set_partition_change_propagation(
 
     propagations_filtered.append(entry)
     pc["propagators"] = propagations_filtered
+
+
+def set_ssrs_report(
+    *,
+    data: MutableMapping[str, Any],
+    name: str,
+    model: str,
+    subscription_description: str,
+    enabled: bool,
+) -> None:
+    name = name.strip()
+    if not name:
+        raise ValueError("report name must be non-empty")
+    model = model.strip()
+    if not model:
+        raise ValueError("report model must be non-empty")
+    subscription_description = subscription_description.strip()
+    if not subscription_description:
+        raise ValueError("subscription_description must be non-empty")
+
+    entry: dict[str, Any] = {
+        "name": name,
+        "model": model,
+        "subscription_description": subscription_description,
+        "enabled": bool(enabled),
+    }
+
+    reports = _ensure_list(data, "ssrs_reports")
+
+    reports_filtered: list[dict[str, Any]] = []
+    for r in reports:
+        if isinstance(r, Mapping) and r.get("name") == name:
+            continue
+        if isinstance(r, dict):
+            reports_filtered.append(r)
+
+    reports_filtered.append(entry)
+    data["ssrs_reports"] = reports_filtered
+
+
+def delete_ssrs_report(*, data: MutableMapping[str, Any], name: str) -> bool:
+    name = name.strip()
+    if not name:
+        return False
+    reports = data.get("ssrs_reports")
+    if not isinstance(reports, list):
+        return False
+    reports_filtered = [r for r in reports if not (isinstance(r, Mapping) and r.get("name") == name)]
+    if len(reports_filtered) == len(reports):
+        return False
+    data["ssrs_reports"] = reports_filtered
+    return True
 
 
 def derive_job_name_for_model(index: OrchestrationIndex, *, model: str) -> str | None:

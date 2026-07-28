@@ -1,4 +1,5 @@
 from .dbt import make_dbt_resource
+from .ssrs_agent import make_ssrs_agent_resource
 from .starrocks import make_starrocks_resource
 
 
@@ -6,4 +7,5 @@ def get_resources():
     return {
         "dbt": make_dbt_resource(),
         "starrocks": make_starrocks_resource(),
+        "ssrs_agent": make_ssrs_agent_resource(),
     }
