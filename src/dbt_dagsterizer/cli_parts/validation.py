@@ -251,6 +251,38 @@ def validate_orchestration(
                     )
                 )
 
+    reports = orchestration.get("ssrs_reports")
+    if reports is not None and not isinstance(reports, list):
+        issues.append(ValidationIssue("error", "ssrs_reports must be a list"))
+    if isinstance(reports, list):
+        seen_report_names: set[str] = set()
+        for i, r in enumerate(reports):
+            if not isinstance(r, dict):
+                issues.append(ValidationIssue("error", f"ssrs_reports[{i}] must be a mapping"))
+                continue
+            name = r.get("name")
+            if not isinstance(name, str) or not name.strip():
+                issues.append(ValidationIssue("error", f"ssrs_reports[{i}].name must be non-empty"))
+            else:
+                if name.strip() in seen_report_names:
+                    issues.append(ValidationIssue("error", f"ssrs_reports[{i}] duplicates name '{name.strip()}'"))
+                seen_report_names.add(name.strip())
+            model = r.get("model")
+            if not isinstance(model, str) or not model.strip():
+                issues.append(ValidationIssue("error", f"ssrs_reports[{i}].model must be non-empty"))
+            elif model.strip() not in existing_models:
+                issues.append(
+                    ValidationIssue("error", f"ssrs_reports[{i}] references missing model '{model.strip()}'")
+                )
+            subscription_description = r.get("subscription_description")
+            if not isinstance(subscription_description, str) or not subscription_description.strip():
+                issues.append(
+                    ValidationIssue("error", f"ssrs_reports[{i}].subscription_description must be non-empty")
+                )
+            enabled = r.get("enabled")
+            if enabled is not None and not isinstance(enabled, bool):
+                issues.append(ValidationIssue("error", f"ssrs_reports[{i}].enabled must be boolean when set"))
+
     if require_file_exists and not orchestration_path.exists():
         issues.append(ValidationIssue("error", f"orchestration file not found: {orchestration_path}"))
     return issues
@@ -368,6 +400,26 @@ def validate_orchestration_structure(*, orchestration: dict[str, Any]) -> list[V
                                 f"replication.entries[{i}].write_disposition must be 'append', 'replace', or 'merge'",
                             )
                         )
+
+    reports = orchestration.get("ssrs_reports")
+    if reports is not None and not isinstance(reports, list):
+        issues.append(ValidationIssue("error", "ssrs_reports must be a list"))
+    if isinstance(reports, list):
+        for i, r in enumerate(reports):
+            if not isinstance(r, dict):
+                issues.append(ValidationIssue("error", f"ssrs_reports[{i}] must be a mapping"))
+                continue
+            name = r.get("name")
+            if not isinstance(name, str) or not name.strip():
+                issues.append(ValidationIssue("error", f"ssrs_reports[{i}].name must be non-empty"))
+            model = r.get("model")
+            if not isinstance(model, str) or not model.strip():
+                issues.append(ValidationIssue("error", f"ssrs_reports[{i}].model must be non-empty"))
+            subscription_description = r.get("subscription_description")
+            if not isinstance(subscription_description, str) or not subscription_description.strip():
+                issues.append(
+                    ValidationIssue("error", f"ssrs_reports[{i}].subscription_description must be non-empty")
+                )
 
     _ = idx
     return issues

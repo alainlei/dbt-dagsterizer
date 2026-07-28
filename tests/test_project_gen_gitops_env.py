@@ -65,6 +65,7 @@ def test_project_gen_gitops_env_generates_kustomize_tree(tmp_path: Path):
     secret_text = base_secret.read_text(encoding="utf-8")
     assert "name: demo-app-secret" in secret_text
     assert 'STARROCKS_PASSWORD: ""' in secret_text
+    assert 'SSRS_DB_PASSWORD: ""' in secret_text
     assert "supersecret" not in secret_text
 
     prd_text = prd_configmap.read_text(encoding="utf-8")
