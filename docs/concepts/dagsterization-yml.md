@@ -24,6 +24,7 @@ The file bridges dbt metadata (from `manifest.json`) with Dagster orchestration 
 - **Schedules** (when jobs should run)
 - **Partition change sensors** (detectors and propagators for handling late arrivals)
 - **Replication** (optional StarRocks-to-SQL Server data replication via dlt)
+- **SSRS reports** (optional triggering of SQL Server Reporting Services subscriptions after models materialize)
 
 ## Top-Level Structure
 
@@ -56,6 +57,7 @@ partition_change:                   # Partition change detection
 replication:                        # Optional: StarRocks -> SQL Server replication
   enabled: false
   entries: []
+ssrs_reports: []                    # Optional: SSRS subscription triggers
 ```
 
 ---
@@ -499,6 +501,87 @@ dbt-dagsterizer meta replication entry \
 
 ---
 
+## SSRS Reports
+
+SSRS reports trigger pre-configured SQL Server Reporting Services (SSRS) subscriptions after their upstream dbt models materialize. It is an **optional** feature; no reports are configured by default (`ssrs_reports: []`).
+
+### How it works
+
+1. Each entry in `ssrs_reports` gets a **report asset** (asset key `ssrs/<name>`) in the `reports` asset group
+2. The report asset depends on the dbt model asset, so it executes **after** the dbt build completes
+3. When `enabled: true`, the asset uses `AutomationCondition.eager()` and auto-materializes as soon as the upstream model materializes; when `enabled: false`, it must be materialized manually
+4. On materialization, the SSRS agent resource resolves the **SQL Server Agent job** backing the subscription by matching `subscription_description` against `ReportServer.dbo.Subscriptions`, then starts the job via `msdb.dbo.sp_start_job`
+5. Report rendering and delivery are handled entirely by SSRS according to the subscription's own configuration
+
+The asset records `subscription_description` and `agent_job_name` as materialization metadata in the Dagster UI.
+
+### Prerequisites
+
+- An SSRS subscription must already exist on the report server, with a **unique** `Description`. The lookup fails if the description matches zero or more than one SQL Server Agent job.
+- The `pymssql` package must be installed in the code location (a clear runtime error is raised if it is missing).
+- The SQL Server instance hosting the `ReportServer` and `msdb` databases must be reachable from Dagster (see [SSRS Agent Connection](#ssrs-agent-connection) below).
+
+### Configuration
+
+```yaml
+ssrs_reports:
+  - name: daily_sales
+    model: fct_sales_daily
+    subscription_description: "Daily sales report subscription"
+    enabled: true
+```
+
+**Fields**:
+
+| Field | Description | Default |
+|-------|-------------|---------|
+| `name` | Unique report name; used for the asset key `ssrs/<name>` (non-alphanumeric characters are replaced with `_`) (required) | — |
+| `model` | dbt model name that triggers the report; must exist in the manifest (required) | — |
+| `subscription_description` | Description of the SSRS subscription in the ReportServer catalog; used to look up its SQL Server Agent job (required, must be unique on the report server) | — |
+| `enabled` | When `true`, the report auto-materializes eagerly after the upstream model | `false` |
+
+### SSRS Agent Connection
+
+The SSRS agent client connects to the SQL Server that hosts the `ReportServer` and `msdb` databases. Connection details are loaded from environment variables (like the StarRocks and replication SQL Server resources):
+
+```bash
+SSRS_DB_HOST=sqlserver.example.com
+SSRS_DB_PORT=1433
+SSRS_DB_USERNAME=ssrs_trigger
+SSRS_DB_PASSWORD=********
+SSRS_DB_DATABASE=msdb
+SSRS_DB_TIMEOUT_SECONDS=60
+```
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `SSRS_DB_HOST` | SQL Server host/IP for the ReportServer/msdb instance (**required** when `ssrs_reports` entries exist) | — |
+| `SSRS_DB_PORT` | SQL Server port | `1433` |
+| `SSRS_DB_USERNAME` | SQL Server login username; when empty, the connection is made without explicit credentials | (empty) |
+| `SSRS_DB_PASSWORD` | SQL Server login password | (empty) |
+| `SSRS_DB_DATABASE` | Database used for the connection | `msdb` |
+| `SSRS_DB_TIMEOUT_SECONDS` | Connection and login timeout in seconds | `60` |
+
+Notes:
+
+- The configured login needs read access to `ReportServer.dbo.Catalog`, `ReportServer.dbo.Subscriptions`, `ReportServer.dbo.ReportSchedule`, and `msdb.dbo.sysjobs`, plus permission to execute `msdb.dbo.sp_start_job`.
+- If `SSRS_DB_HOST` is not set, materializing a report asset fails with `SSRS_DB_HOST is not configured`.
+
+### CLI equivalent
+
+```bash
+dbt-dagsterizer meta report \
+  --name daily_sales \
+  --model fct_sales_daily \
+  --subscription-description "Daily sales report subscription" \
+  --enabled
+
+# Remove a report entry
+dbt-dagsterizer meta report-delete --name daily_sales
+```
+
+---
+
 ## Complete Example
 
 Here's a realistic `dagsterization.yml` for a multi-layer dbt project:
@@ -584,6 +667,13 @@ replication:
       write_disposition: replace
       partition_column: order_date
       primary_key: order_id
+
+# Optional: SSRS subscription triggers
+ssrs_reports:
+  - name: daily_sales
+    model: fact_orders_daily
+    subscription_description: "Daily sales report subscription"
+    enabled: true
 ```
 
 ---
@@ -635,6 +725,13 @@ dbt-dagsterizer meta replication entry \
   --destination-table orders \
   --write-disposition replace \
   --partition-column order_date
+
+# Configure SSRS report trigger
+dbt-dagsterizer meta report \
+  --name daily_sales \
+  --model fact_orders_daily \
+  --subscription-description "Daily sales report subscription" \
+  --enabled
 
 # Validate
 dbt-dagsterizer meta validate

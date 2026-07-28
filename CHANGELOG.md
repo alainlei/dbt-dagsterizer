@@ -13,6 +13,10 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 - Added optional StarRocks-to-MSSQL data replication feature using dlt, configured via a `replication` section in `dagsterization.yml`.
   - Replication assets run as Dagster asset dependencies after their source dbt models are materialized.
   - Creates and populates user-defined destination tables in Microsoft SQL Server.
+- Added optional SSRS (SQL Server Reporting Services) subscription triggering, configured via an `ssrs_reports` section in `dagsterization.yml` and managed with the `meta report` / `meta report-delete` CLI commands.
+  - Each report entry becomes a Dagster asset (`ssrs/<name>`, group `reports`) that depends on its upstream dbt model and, when enabled, auto-materializes eagerly after the model materializes.
+  - The SSRS agent resource resolves the subscription's SQL Server Agent job by its `subscription_description` in the ReportServer catalog and starts it via `msdb.dbo.sp_start_job`; rendering and delivery stay in SSRS.
+  - Connection is configured via `SSRS_DB_HOST`, `SSRS_DB_PORT` (default `1433`), `SSRS_DB_USERNAME`, `SSRS_DB_PASSWORD`, `SSRS_DB_DATABASE` (default `msdb`), and `SSRS_DB_TIMEOUT_SECONDS` (default `60`) environment variables.
 - Added row count metadata for dbt assets to improve observability in Dagster UI:
   - Added `AssetObservation` events with `last_run_affected_row_count` metadata showing rows inserted/updated in the current run.
   - Added `AssetObservation` events with `dagster/row_count` metadata showing total table row count after materialization.
