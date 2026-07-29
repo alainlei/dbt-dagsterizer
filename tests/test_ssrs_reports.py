@@ -221,6 +221,55 @@ def test_ssrs_report_asset_starts_subscription_job():
     assert started_calls == [{"subscription_description": SUBSCRIPTION_DESCRIPTION}]
 
 
+def test_ssrs_report_eager_condition_triggers_on_partitioned_upstream():
+    """The report must fire after the latest upstream partition materializes,
+    even when historical upstream partitions were never materialized."""
+    from datetime import datetime, timedelta, timezone
+
+    from dbt_dagsterizer.assets.ssrs.factory import build_ssrs_report_assets
+
+    start_date = (datetime.now(timezone.utc) - timedelta(days=5)).strftime("%Y-%m-%d")
+    partitions_def = dg.DailyPartitionsDefinition(start_date=start_date)
+    upstream_key = dg.AssetKey(["dbt", "dwh", "dws", "fct_sales_daily"])
+    report_key = dg.AssetKey(["ssrs", "daily_sales"])
+
+    @dg.asset(key=upstream_key, partitions_def=partitions_def)
+    def upstream():
+        return None
+
+    class FakeAgent:
+        def start_subscription_job(self, **kwargs):
+            return AGENT_JOB_NAME
+
+    report_assets = build_ssrs_report_assets(specs=[_report_spec()])
+    defs = dg.Definitions(
+        assets=[upstream, *report_assets],
+        resources={"ssrs_agent": FakeAgent()},
+    )
+
+    instance = dg.DagsterInstance.ephemeral()
+
+    # Baseline evaluation: nothing materialized yet, nothing requested.
+    result = dg.evaluate_automation_conditions(defs=defs, instance=instance)
+    assert result.get_num_requested(report_key) == 0
+
+    # Materialize only the latest partition; older partitions stay missing.
+    latest_partition = partitions_def.get_last_partition_key()
+    assert dg.materialize([upstream], instance=instance, partition_key=latest_partition).success
+
+    result = dg.evaluate_automation_conditions(defs=defs, instance=instance, cursor=result.cursor)
+    assert result.get_num_requested(report_key) == 1
+
+    # Intermediate tick with no upstream activity: nothing new is requested.
+    result = dg.evaluate_automation_conditions(defs=defs, instance=instance, cursor=result.cursor)
+    assert result.get_num_requested(report_key) == 0
+
+    # Re-materializing the same (live) partition triggers the report again.
+    assert dg.materialize([upstream], instance=instance, partition_key=latest_partition).success
+    result = dg.evaluate_automation_conditions(defs=defs, instance=instance, cursor=result.cursor)
+    assert result.get_num_requested(report_key) == 1
+
+
 class _FakeCursor:
     def __init__(self, lookup_rows: list[tuple]):
         self.lookup_rows = lookup_rows
