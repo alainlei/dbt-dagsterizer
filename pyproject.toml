@@ -50,3 +50,8 @@ ignore = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+filterwarnings = [
+    # Emitted internally by dagster.evaluate_automation_conditions (automation_condition_tester.py),
+    # which calls AssetSelection.all(include_sources=True) itself; not actionable from our code.
+    "ignore:Parameter `include_sources` of function `AssetSelection.all`:dagster_shared.utils.warnings.BetaWarning",
+]

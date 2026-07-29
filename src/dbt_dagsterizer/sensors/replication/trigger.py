@@ -1,10 +1,16 @@
 """Build replication trigger sensors.
 
 Each sensor watches materialization events of an upstream dbt model asset and
-emits ``RunRequest(partition_key=...)`` for every newly materialized partition.
-This ensures that the replication job runs for **each** partition independently,
-solving the problem where ``deps``-based auto-materialization only triggers one
-partition when multiple partitions are materialized simultaneously.
+triggers the replication job:
+
+- Partitioned entries: emits ``RunRequest(partition_key=...)`` for every newly
+  materialized partition.  This ensures that the replication job runs for
+  **each** partition independently, solving the problem where ``deps``-based
+  auto-materialization only triggers one partition when multiple partitions
+  are materialized simultaneously.
+- Unpartitioned entries: emits a single ``RunRequest`` (no partition key) so
+  the replication executes for the entire table whenever the upstream model
+  materializes.
 
 The pattern mirrors the partition-change propagator sensor but targets the
 replication job instead of a dbt job.
@@ -12,13 +18,12 @@ replication job instead of a dbt job.
 from __future__ import annotations
 
 import dagster as dg
-from dagster._core.event_api import EventRecordsFilter
 
 
 def build_replication_trigger_sensors(
     *, specs: list[dict], jobs_by_name: dict
 ) -> list[dg.SensorDefinition]:
-    """Build one sensor per partitioned replication entry.
+    """Build one sensor per enabled replication entry.
 
     Args:
         specs: List of sensor spec dicts from ``auto_config``.
@@ -53,6 +58,8 @@ def _build_sensor(spec: dict, jobs_by_name: dict) -> dg.SensorDefinition:
     job_name = spec["job_name"]
     upstream_model_relation = spec["upstream_model_relation"]
     upstream_model_name = spec["upstream_model_name"]
+    partition_type = spec.get("partition_type", "unpartitioned")
+    unpartitioned = partition_type in ("unpartitioned", None, "")
     enabled = bool(spec.get("enabled", True))
     minimum_interval_seconds = int(spec.get("minimum_interval_seconds", 30))
 
@@ -78,48 +85,66 @@ def _build_sensor(spec: dict, jobs_by_name: dict) -> dg.SensorDefinition:
             try:
                 after_cursor = int(cursor)
             except ValueError:
-                latest = context.instance.get_event_records(
-                    EventRecordsFilter(
-                        event_type=dg.DagsterEventType.ASSET_MATERIALIZATION,
-                        asset_key=upstream_asset_key,
-                    ),
+                latest = context.instance.fetch_materializations(
+                    upstream_asset_key,
                     limit=1,
                     ascending=False,
-                )
-                if latest:
-                    context.update_cursor(str(latest[0].storage_id))
-                else:
-                    context.update_cursor("")
+                ).records
+                # Seed to "0" when no history exists so the first-ever
+                # materialization is processed instead of re-entering the
+                # bootstrap and being swallowed as the seed.
+                context.update_cursor(str(latest[0].storage_id) if latest else "0")
                 yield dg.SkipReason("Reset invalid replication trigger cursor")
                 return
         else:
             # First evaluation: seed cursor to latest event so we don't
-            # re-trigger historical materializations.
-            latest = context.instance.get_event_records(
-                EventRecordsFilter(
-                    event_type=dg.DagsterEventType.ASSET_MATERIALIZATION,
-                    asset_key=upstream_asset_key,
-                ),
+            # re-trigger historical materializations.  When the upstream
+            # asset has never materialized, seed to "0" so the very first
+            # materialization (e.g. a partition first materialized via
+            # observable-source detection) triggers replication on the next
+            # tick instead of being consumed as the bootstrap seed.
+            latest = context.instance.fetch_materializations(
+                upstream_asset_key,
                 limit=1,
                 ascending=False,
-            )
-            if latest:
-                context.update_cursor(str(latest[0].storage_id))
+            ).records
+            context.update_cursor(str(latest[0].storage_id) if latest else "0")
             yield dg.SkipReason(
                 f"Initialized replication trigger cursor for '{name}'"
             )
             return
 
         # --- fetch new materialization events since cursor ---
-        records = context.instance.get_event_records(
-            EventRecordsFilter(
-                event_type=dg.DagsterEventType.ASSET_MATERIALIZATION,
+        records = context.instance.fetch_materializations(
+            dg.AssetRecordsFilter(
                 asset_key=upstream_asset_key,
-                after_cursor=after_cursor,
+                after_storage_id=after_cursor,
             ),
             limit=1000,
             ascending=True,
-        )
+        ).records
+
+        if unpartitioned:
+            # Unpartitioned replication: any new materialization of the
+            # upstream model triggers one full-table replication run.
+            if not records:
+                yield dg.SkipReason(
+                    f"No new materialization events for '{upstream_model_name}'"
+                )
+                return
+
+            latest_record = max(records, key=lambda r: r.storage_id)
+            run_key = f"{name}:{latest_record.run_id}:{latest_record.storage_id}"
+            yield dg.RunRequest(
+                run_key=run_key,
+                tags={
+                    "luban/replication_trigger": name,
+                    "luban/upstream_dbt_model": upstream_model_name,
+                    "luban/upstream_asset_key": upstream_asset_key.to_user_string(),
+                },
+            )
+            context.update_cursor(str(latest_record.storage_id))
+            return
 
         # Deduplicate: keep only the latest event per partition key.
         latest_by_partition: dict[str, object] = {}

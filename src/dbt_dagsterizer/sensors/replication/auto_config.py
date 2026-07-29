@@ -1,8 +1,9 @@
 """Replication trigger sensors: auto-configuration from dagsterization.yml.
 
-Builds sensor specs for partitioned replication entries so that a dedicated
+Builds sensor specs for enabled replication entries so that a dedicated
 sensor watches each upstream dbt model's materialization events and triggers
-the corresponding replication job per partition.
+the corresponding replication job — per partition for partitioned models, or
+once (full table) for unpartitioned models.
 """
 from __future__ import annotations
 
@@ -26,8 +27,10 @@ from ...resources.dbt import get_dbt_project_dir
 def build_auto_replication_trigger_specs() -> list[dict]:
     """Build replication trigger sensor specs from dagsterization.yml.
 
-    Only partitioned replication entries get a trigger sensor — unpartitioned
-    entries rely on the replication schedule or manual triggering.
+    Every enabled replication entry gets a trigger sensor.  Partitioned
+    entries trigger the replication job per materialized partition; and
+    unpartitioned entries trigger a single full-table replication run when
+    the upstream dbt model materializes.
 
     Returns an empty list when replication is disabled.
     """
@@ -55,9 +58,8 @@ def build_auto_replication_trigger_specs() -> list[dict]:
             continue
 
         partition_type = idx.partitions_by_model.get(model_name, "unpartitioned")
-        if partition_type in ("unpartitioned", None, ""):
-            # Unpartitioned replication: no per-partition sensor needed.
-            continue
+        if partition_type in (None, ""):
+            partition_type = "unpartitioned"
 
         relation = model_relation_map.get(model_name)
         if relation is None:

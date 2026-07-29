@@ -1,8 +1,9 @@
 """Replication trigger sensors package.
 
 Provides ``get_replication_trigger_sensors()`` which builds one sensor per
-partitioned replication entry.  Each sensor watches the upstream dbt model's
-materialization events and triggers the replication job for every partition.
+enabled replication entry.  Each sensor watches the upstream dbt model's
+materialization events and triggers the replication job — per partition for
+partitioned entries, or once (full table) for unpartitioned entries.
 """
 
 __all__ = ["get_replication_trigger_sensors"]

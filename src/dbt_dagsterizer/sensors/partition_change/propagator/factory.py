@@ -4,7 +4,6 @@ import os
 import time
 
 import dagster as dg
-from dagster._core.event_api import EventRecordsFilter
 
 
 def build_partition_propagation_sensors(*, specs: list[dict], jobs_by_name: dict) -> list[dg.SensorDefinition]:
@@ -56,48 +55,40 @@ def build_partition_propagation_sensors(*, specs: list[dict], jobs_by_name: dict
                 try:
                     after_cursor = int(cursor)
                 except ValueError:
-                    latest = context.instance.get_event_records(
-                        EventRecordsFilter(
-                            event_type=dg.DagsterEventType.ASSET_MATERIALIZATION,
-                            asset_key=upstream_asset_key,
-                        ),
+                    latest = context.instance.fetch_materializations(
+                        upstream_asset_key,
                         limit=1,
                         ascending=False,
-                    )
-                    if latest:
-                        context.update_cursor(str(latest[0].storage_id))
-                    else:
-                        context.update_cursor("")
+                    ).records
+                    # Seed to "0" when no history exists so the first-ever
+                    # materialization is processed on the next tick instead of
+                    # being swallowed as the bootstrap seed.
+                    context.update_cursor(str(latest[0].storage_id) if latest else "0")
                     yield dg.SkipReason("Reset invalid propagation cursor")
                     return
             elif catchup_days > 0:
                 after_timestamp = now - (catchup_days * 86400)
             else:
-                latest = context.instance.get_event_records(
-                    EventRecordsFilter(
-                        event_type=dg.DagsterEventType.ASSET_MATERIALIZATION,
-                        asset_key=upstream_asset_key,
-                    ),
+                latest = context.instance.fetch_materializations(
+                    upstream_asset_key,
                     limit=1,
                     ascending=False,
-                )
-                if latest:
-                    context.update_cursor(str(latest[0].storage_id))
+                ).records
+                context.update_cursor(str(latest[0].storage_id) if latest else "0")
                 yield dg.SkipReason(
                     "Initialized propagation cursor (set LUBAN_PARTITION_CHANGE_PROPAGATOR_CATCHUP_DAYS to backfill)"
                 )
                 return
 
-            records = context.instance.get_event_records(
-                EventRecordsFilter(
-                    event_type=dg.DagsterEventType.ASSET_MATERIALIZATION,
+            records = context.instance.fetch_materializations(
+                dg.AssetRecordsFilter(
                     asset_key=upstream_asset_key,
-                    after_cursor=after_cursor,
+                    after_storage_id=after_cursor,
                     after_timestamp=after_timestamp,
                 ),
                 limit=1000,
                 ascending=True,
-            )
+            ).records
 
             latest_by_partition: dict[str, object] = {}
             for r in records:
@@ -116,14 +107,11 @@ def build_partition_propagation_sensors(*, specs: list[dict], jobs_by_name: dict
                     )
                     return
 
-                latest = context.instance.get_event_records(
-                    EventRecordsFilter(
-                        event_type=dg.DagsterEventType.ASSET_MATERIALIZATION,
-                        asset_key=upstream_asset_key,
-                    ),
+                latest = context.instance.fetch_materializations(
+                    upstream_asset_key,
                     limit=1,
                     ascending=False,
-                )
+                ).records
                 if latest:
                     context.update_cursor(str(latest[0].storage_id))
                 yield dg.SkipReason(f"No new materialization events found for asset key {upstream_asset_key}")
