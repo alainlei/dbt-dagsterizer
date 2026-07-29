@@ -9,6 +9,25 @@ def _sanitized_name(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9_]", "_", name)
 
 
+def _eager_report_condition() -> dg.AutomationCondition:
+    """Eager condition tolerant of partitioned upstream dbt models.
+
+    The report asset is unpartitioned while its upstream dbt model may be
+    daily-partitioned, so the asset depends on every upstream partition.
+    Stock ``eager()`` gates on ``~any_deps_missing()``, which stays true
+    forever when historical partitions were never materialized and thus never
+    triggers the report. Scoping the missing check to the latest time window
+    lets the report fire after each successful upstream partition
+    materialization.
+    """
+    return dg.AutomationCondition.eager().replace(
+        "any_deps_missing",
+        dg.AutomationCondition.any_deps_match(
+            dg.AutomationCondition.missing() & dg.AutomationCondition.in_latest_time_window()
+        ).with_label("any_deps_missing_in_latest_time_window"),
+    )
+
+
 def build_ssrs_report_assets(*, specs: list[dict]) -> list:
     """Build one report asset per spec.
 
@@ -24,7 +43,7 @@ def build_ssrs_report_assets(*, specs: list[dict]) -> list:
         enabled = bool(spec.get("enabled", False))
 
         upstream_asset_key = dg.AssetKey(spec["upstream_relation"])
-        automation_condition = dg.AutomationCondition.eager() if enabled else None
+        automation_condition = _eager_report_condition() if enabled else None
 
         @dg.asset(
             key=dg.AssetKey(["ssrs", _sanitized_name(name)]),
