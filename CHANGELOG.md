@@ -25,6 +25,12 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 ### Fixed
 
+- Fixed replication executor logging to avoid leaking URL-encoded database credentials.
+- Fixed SSRS report `enabled` default to be consistent across `dagsterization.yml` docs, CLI defaults, and runtime auto-configuration (defaults to enabled).
+- Fixed orchestration validation so `materialize_at_startup` warnings for daily-partitioned models trigger reliably without scanning manifest tags unnecessarily.
+- Fixed `build_definitions()` environment handling to avoid overriding `DBT_PROJECT_DIR` unless explicitly provided.
+- Fixed rendered template test modules to remain syntactically valid before cookiecutter rendering.
+
 ### Changed
 
 ## [0.3.3] - 2026-07-11
