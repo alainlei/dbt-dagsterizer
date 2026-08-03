@@ -1,4 +1,5 @@
 import os
+import importlib
 from pathlib import Path
 
 # Ensure Dagster doesn't try to connect to StarRocks during simple definition tests
@@ -8,7 +9,7 @@ os.environ["STARROCKS_PORT"] = "9030"
 os.environ["STARROCKS_USER"] = "mock_user"
 os.environ["STARROCKS_PASSWORD"] = "mock_pass"
 
-from {{cookiecutter.package_name}} import defs
+defs = importlib.import_module("{{cookiecutter.package_name}}").defs
 
 
 def test_definitions_load():

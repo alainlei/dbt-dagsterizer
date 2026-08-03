@@ -6,7 +6,6 @@ codebase works even when the ``dlt`` package is not installed.
 from __future__ import annotations
 
 import logging
-import re
 from typing import Any
 from urllib.parse import quote_plus
 
@@ -15,18 +14,10 @@ from ...resources.starrocks import StarRocksClient
 
 logger = logging.getLogger(__name__)
 
-_IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-
-
-def _require_simple_identifier(value: str, *, label: str) -> str:
+def _require_identifier(value: str, *, label: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{label} must be a non-empty string")
-    value = value.strip()
-    if not _IDENTIFIER_PATTERN.fullmatch(value):
-        raise ValueError(
-            f"{label} must match {_IDENTIFIER_PATTERN.pattern} (got {value!r})"
-        )
-    return value
+    return value.strip()
 
 
 def _quote_sqlserver_identifier(value: str) -> str:
@@ -35,6 +26,9 @@ def _quote_sqlserver_identifier(value: str) -> str:
 
 def _quote_mysql_identifier(value: str) -> str:
     return f"`{value.replace('`', '``')}`"
+
+def _escape_sqlserver_literal(value: str) -> str:
+    return value.replace("'", "''")
 
 
 def execute_replication(
@@ -63,22 +57,16 @@ def execute_replication(
     partition_column = spec.get("partition_column")
     primary_key_col = spec.get("primary_key")
 
-    source_database = _require_simple_identifier(str(source_database), label="source_database")
-    source_table = _require_simple_identifier(str(source_table), label="source_table")
-    destination_table = _require_simple_identifier(
-        str(destination_table), label="destination_table"
-    )
-    destination_schema = _require_simple_identifier(
-        str(destination_schema), label="destination_schema"
-    )
+    source_database = _require_identifier(str(source_database), label="source_database")
+    source_table = _require_identifier(str(source_table), label="source_table")
+    destination_table = _require_identifier(str(destination_table), label="destination_table")
+    destination_schema = _require_identifier(str(destination_schema), label="destination_schema")
     partition_column_name = None
     if partition_column is not None and str(partition_column).strip():
-        partition_column_name = _require_simple_identifier(
-            str(partition_column), label="partition_column"
-        )
+        partition_column_name = _require_identifier(str(partition_column), label="partition_column")
     primary_key_name = None
     if primary_key_col is not None and str(primary_key_col).strip():
-        primary_key_name = _require_simple_identifier(str(primary_key_col), label="primary_key")
+        primary_key_name = _require_identifier(str(primary_key_col), label="primary_key")
 
     # Extract partition key when the asset is partitioned
     partition_key: str | None = None
@@ -100,8 +88,8 @@ def execute_replication(
 
     # Build the StarRocks source connection string (MySQL protocol via pymysql)
     source_credentials = (
-        f"mysql+pymysql://{starrocks_client.user}:{starrocks_client.password}"
-        f"@{starrocks_client.host}:{starrocks_client.port}/{source_database}"
+        f"mysql+pymysql://{quote_plus(starrocks_client.user)}:{quote_plus(starrocks_client.password)}"
+        f"@{starrocks_client.host}:{starrocks_client.port}/{quote_plus(source_database)}"
     )
 
     # Build SQL Server connection string for dlt
@@ -115,8 +103,15 @@ def execute_replication(
         f"?driver={driver_encoded}&TrustServerCertificate=yes&Encrypt=no"
     )
 
-    log.info("Source credentials: %s", source_credentials.replace(starrocks_client.password, "***"))
-    log.info("Destination credentials: %s", mssql_credentials.replace(mssql_client.password, "***"))
+    log.info(
+        "Replication connections: source=%s:%s/%s destination=%s:%s/%s",
+        starrocks_client.host,
+        starrocks_client.port,
+        source_database,
+        mssql_client.host,
+        mssql_client.port,
+        mssql_client.database,
+    )
 
     # Create dlt pipeline targeting SQL Server
     # Include partition key in pipeline_name to isolate dlt state per partition,
@@ -224,14 +219,12 @@ def execute_replication(
 
     if primary_key:
         constraint_name = f"PK_{destination_table}"
-        constraint_identifier = _quote_sqlserver_identifier(
-            _require_simple_identifier(constraint_name, label="constraint_name")
-        )
+        constraint_identifier = _quote_sqlserver_identifier(constraint_name)
         pk_identifier = _quote_sqlserver_identifier(primary_key_name)
-        object_id_target = f"{destination_schema}.{destination_table}"
-        dataset_identifier = _quote_sqlserver_identifier(
-            _require_simple_identifier(destination_schema, label="dataset_name")
+        object_id_target = _escape_sqlserver_literal(
+            f"{_quote_sqlserver_identifier(destination_schema)}.{_quote_sqlserver_identifier(destination_table)}"
         )
+        dataset_identifier = _quote_sqlserver_identifier(destination_schema)
 
         with pipeline.sql_client() as client:
         # Check if the constraint already exists to avoid errors on subsequent runs
