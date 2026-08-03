@@ -426,7 +426,9 @@ When `partition_column` is not set on a partitioned model, a **full table copy**
 The `write_disposition` field controls how data is loaded into SQL Server:
 
 - **`append`**: Appends new data to the existing table without modifying existing rows
-- **`replace`**: Truncates the table before loading, replacing all existing data
+- **`replace`**: Replaces existing data before loading
+  - Unpartitioned: truncates the table before loading
+  - Partition-aware (when `partition_column` is set and the model is partitioned): deletes only the current partition's rows, then appends
 - **`merge`**: Updates existing rows based on `primary_key` and inserts new rows. You **must** set `primary_key` to a column name that uniquely identifies a row. dlt uses this column to perform an `UPDATE` for matching rows and an `INSERT` for new rows.
 
 > **Note**: When `primary_key` is set, dlt creates a primary key constraint in the destination SQL Server table. This applies to all write dispositions (`append`, `replace`, and `merge`).
@@ -538,7 +540,7 @@ ssrs_reports:
 | `name` | Unique report name; used for the asset key `ssrs/<name>` (non-alphanumeric characters are replaced with `_`) (required) | — |
 | `model` | dbt model name that triggers the report; must exist in the manifest (required) | — |
 | `subscription_description` | Description of the SSRS subscription in the ReportServer catalog; used to look up its SQL Server Agent job (required, must be unique on the report server) | — |
-| `enabled` | When `true`, the report auto-materializes eagerly after the upstream model | `false` |
+| `enabled` | When `true`, the report auto-materializes eagerly after the upstream model | `true` |
 
 ### SSRS Agent Connection
 
@@ -565,6 +567,7 @@ SSRS_DB_TIMEOUT_SECONDS=60
 Notes:
 
 - The configured login needs read access to `ReportServer.dbo.Catalog`, `ReportServer.dbo.Subscriptions`, `ReportServer.dbo.ReportSchedule`, and `msdb.dbo.sysjobs`, plus permission to execute `msdb.dbo.sp_start_job`.
+- The subscription lookup assumes the SSRS catalog database is named `ReportServer` (not configurable today).
 - If `SSRS_DB_HOST` is not set, materializing a report asset fails with `SSRS_DB_HOST is not configured`.
 
 ### CLI equivalent

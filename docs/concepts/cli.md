@@ -353,6 +353,7 @@ Flags:
 Notes:
 
 - The SSRS agent connection is configured via environment variables: `SSRS_DB_HOST` (required), `SSRS_DB_PORT` (default `1433`), `SSRS_DB_USERNAME`, `SSRS_DB_PASSWORD`, `SSRS_DB_DATABASE` (default `msdb`), and `SSRS_DB_TIMEOUT_SECONDS` (default `60`).
+- The subscription lookup expects the SSRS catalog database to be named `ReportServer` (not configurable today).
 - See [dagsterization-yml.md](dagsterization-yml.md) (SSRS Reports section) for details on how the subscription lookup works.
 
 ### `meta report-delete`

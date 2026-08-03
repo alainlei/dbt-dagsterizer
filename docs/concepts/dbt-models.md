@@ -254,6 +254,25 @@ from {{ ref('customers') }}
 
 This model will automatically refresh whenever the observable source for `customers` detects new data.
 
+### Startup Materialization Tag
+
+Models tagged with `materialize_at_startup` materialize once when the asset has never been materialized before:
+
+```sql
+{{
+  config(
+    tags=["materialize_at_startup"]
+  )
+}}
+```
+
+**Behavior**:
+- Implements `AutomationCondition.missing()` (materialize only when missing).
+- Useful for bootstrap assets that should exist without having to schedule them.
+
+**Caution (partitioned models)**:
+- For partitioned models, “missing” can expand to multiple partitions depending on history and partition definitions. Use this tag only when you are confident the missing-partition set is bounded, or prefer schedules/jobs for controlled backfills.
+
 ---
 
 ## Partition Execution
