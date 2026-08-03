@@ -34,11 +34,13 @@ def build_definitions(
         resolved_dbt_profiles_dir = (
             candidate.resolve() if candidate.is_absolute() else (Path.cwd() / candidate).resolve()
         )
-    env = {
-        "DBT_PROJECT_DIR": str(resolved_dbt_project_dir) if dbt_project_dir is not None else None,
-        "DBT_PROFILES_DIR": str(resolved_dbt_profiles_dir) if resolved_dbt_profiles_dir is not None else None,
-        "LUBAN_DEFAULT_DBT_TARGET": default_dbt_target,
-    }
+    env: dict[str, str] = {}
+    if dbt_project_dir is not None:
+        env["DBT_PROJECT_DIR"] = str(resolved_dbt_project_dir)
+    if resolved_dbt_profiles_dir is not None:
+        env["DBT_PROFILES_DIR"] = str(resolved_dbt_profiles_dir)
+    if default_dbt_target is not None:
+        env["LUBAN_DEFAULT_DBT_TARGET"] = default_dbt_target
 
     with temporary_env(env):
         if not _has_any_dbt_models(resolved_dbt_project_dir):
