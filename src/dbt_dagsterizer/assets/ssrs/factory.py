@@ -40,7 +40,7 @@ def build_ssrs_report_assets(*, specs: list[dict]) -> list:
     def make_asset(spec: dict):
         name = spec["name"]
         subscription_description = spec["subscription_description"]
-        enabled = bool(spec.get("enabled", False))
+        enabled = bool(spec.get("enabled", True))
 
         upstream_asset_key = dg.AssetKey(spec["upstream_relation"])
         automation_condition = _eager_report_condition() if enabled else None

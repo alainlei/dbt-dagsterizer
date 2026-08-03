@@ -37,7 +37,8 @@ def build_definitions(
             candidate.resolve() if candidate.is_absolute() else (Path.cwd() / candidate).resolve()
         )
     env: dict[str, str] = {}
-    env["DBT_PROJECT_DIR"] = str(resolved_dbt_project_dir)
+    if dbt_project_dir is not None:
+        env["DBT_PROJECT_DIR"] = str(resolved_dbt_project_dir)
     if resolved_dbt_profiles_dir is not None:
         env["DBT_PROFILES_DIR"] = str(resolved_dbt_profiles_dir)
     if default_dbt_target is not None:

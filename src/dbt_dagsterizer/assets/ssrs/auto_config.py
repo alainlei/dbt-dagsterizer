@@ -63,7 +63,7 @@ def build_auto_ssrs_report_specs() -> list[dict]:
                     "model": model,
                     "upstream_relation": model_relations[model],
                     "subscription_description": subscription_description.strip(),
-                    "enabled": bool(report.get("enabled", False)),
+                    "enabled": bool(report.get("enabled", True)),
                 }
             )
 

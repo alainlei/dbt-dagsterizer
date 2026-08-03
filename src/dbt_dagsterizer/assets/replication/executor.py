@@ -17,7 +17,14 @@ logger = logging.getLogger(__name__)
 def _require_identifier(value: str, *, label: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{label} must be a non-empty string")
-    return value.strip()
+    value = value.strip()
+    if "." in value:
+        raise ValueError(f"{label} must not contain '.' (got {value!r})")
+    for ch in value:
+        code = ord(ch)
+        if code < 32 or code == 127:
+            raise ValueError(f"{label} must not contain control characters (got {value!r})")
+    return value
 
 
 def _quote_sqlserver_identifier(value: str) -> str:
