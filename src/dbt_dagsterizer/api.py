@@ -34,11 +34,13 @@ def build_definitions(
         resolved_dbt_profiles_dir = (
             candidate.resolve() if candidate.is_absolute() else (Path.cwd() / candidate).resolve()
         )
-    env = {
-        "DBT_PROJECT_DIR": str(resolved_dbt_project_dir) if dbt_project_dir is not None else None,
-        "DBT_PROFILES_DIR": str(resolved_dbt_profiles_dir) if resolved_dbt_profiles_dir is not None else None,
-        "LUBAN_DEFAULT_DBT_TARGET": default_dbt_target,
-    }
+    env: dict[str, str] = {}
+    if dbt_project_dir is not None:
+        env["DBT_PROJECT_DIR"] = str(resolved_dbt_project_dir)
+    if resolved_dbt_profiles_dir is not None:
+        env["DBT_PROFILES_DIR"] = str(resolved_dbt_profiles_dir)
+    if default_dbt_target is not None:
+        env["LUBAN_DEFAULT_DBT_TARGET"] = default_dbt_target
 
     with temporary_env(env):
         if not _has_any_dbt_models(resolved_dbt_project_dir):
@@ -46,10 +48,11 @@ def build_definitions(
             def project_ready(_context) -> None:
                 return None
 
+            from .assets.version_info import build_version_info_asset
             from .resources import get_resources
 
             return Definitions(
-                assets=[project_ready],
+                assets=[build_version_info_asset(), project_ready],
                 jobs=[],
                 schedules=[],
                 sensors=[],
@@ -62,9 +65,12 @@ def build_definitions(
         from .schedules import get_schedules
         from .sensors import get_sensors
 
+        # Build jobs first to ensure they're cached before schedules reference them
+        jobs = get_jobs()
+
         return Definitions(
             assets=get_assets(),
-            jobs=get_jobs(),
+            jobs=jobs,
             schedules=get_schedules(),
             sensors=get_sensors(),
             resources=get_resources(),

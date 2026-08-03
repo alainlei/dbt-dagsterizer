@@ -17,7 +17,7 @@ def _default_dagster_version() -> str:
     try:
         return importlib.metadata.version("dagster")
     except importlib.metadata.PackageNotFoundError:
-        return "1.12.19"
+        return "1.13.12"
 
 
 def _default_dbt_dagsterizer_version() -> str:

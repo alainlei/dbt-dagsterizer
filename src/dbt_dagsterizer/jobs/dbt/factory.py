@@ -5,16 +5,26 @@ from dagster import AssetKey, AssetSelection, define_asset_job
 
 from ...assets.dbt.vars import _get_dbt_vars_for_context
 from ...k8s_tags import with_luban_run_k8s_config_tag
-from ...partitions import get_daily_partitions_def
+from ...partitions import get_partitions_def
 from ...resources.dbt import get_dbt_project_dir
 
 
-def _get_partitions_def(partitions: str):
-    if partitions is None or partitions in {"none", "unpartitioned", ""}:
-        return None
-    if partitions == "daily":
-        return get_daily_partitions_def()
-    raise ValueError(f"Unsupported partitions value: {partitions}")
+def _get_partitions_def(
+    partitions: str | None,
+    include_current_day_partition: bool | None = None,
+):
+    """Convert partition spec to PartitionsDefinition.
+    
+    Args:
+        partitions: Partition specification ("daily", "unpartitioned", None, etc.)
+    
+    Returns:
+        PartitionsDefinition or None
+    
+    Raises:
+        ValueError: If partition spec is invalid
+    """
+    return get_partitions_def(partitions, include_current_day_partition=include_current_day_partition)
 
 
 def _build_selection(selection_spec):
@@ -37,13 +47,13 @@ def _sanitized_name(name: str) -> str:
     return "".join([c if (c.isalnum() or c == "_") else "_" for c in name])
 
 
-def _build_dbt_cli_job(job_spec):
+def _build_dbt_cli_job(job_spec, include_current_day_partition=None):
     job_name = job_spec["name"]
     command = job_spec.get("command", "build")
     select = job_spec["select"]
     vars_dict = job_spec.get("vars") or {}
     partitions = job_spec.get("partitions", "daily")
-    partitions_def = _get_partitions_def(partitions)
+    partitions_def = _get_partitions_def(partitions, include_current_day_partition=include_current_day_partition)
     op_name = _sanitized_name(f"run_{job_name}")
 
     @dg.op(name=op_name, required_resource_keys={"dbt"})
@@ -70,7 +80,10 @@ def _build_dbt_cli_job(job_spec):
     return _job
 
 
-def build_dbt_asset_jobs(job_specs):
+def build_dbt_asset_jobs(
+    job_specs,
+    include_current_day_partition: bool | None = None,
+):
     duplicated = set()
     seen = set()
     for spec in job_specs:
@@ -91,7 +104,14 @@ def build_dbt_asset_jobs(job_specs):
         if job_type == "asset":
             selection = _build_selection(job_spec["selection"])
             partitions = job_spec.get("partitions")
-            partitions_def = _get_partitions_def(partitions)
+            # Get the partition definition for this job
+            # 
+            # IMPORTANT: Both assets AND jobs need partitions_def in Dagster:
+            # - Assets have partitions_def for UI visibility
+            # - Jobs have partitions_def for sensors to emit RunRequests
+            # The job_spec.partitions comes from auto_config which infers partition type
+            # from the models in the job. Use it if available.
+            partitions_def = _get_partitions_def(partitions, include_current_day_partition=include_current_day_partition)
             jobs_by_name[name] = define_asset_job(
                 name=name,
                 selection=selection,
@@ -99,7 +119,7 @@ def build_dbt_asset_jobs(job_specs):
                 tags=with_luban_run_k8s_config_tag(job_spec.get("tags")),
             )
         elif job_type == "dbt_cli":
-            jobs_by_name[name] = _build_dbt_cli_job(job_spec)
+            jobs_by_name[name] = _build_dbt_cli_job(job_spec, include_current_day_partition=include_current_day_partition)
         else:
             raise ValueError(f"Unsupported job type: {job_type}")
 

@@ -11,6 +11,8 @@ dependencies = [
     "dagster-dbt>=0.26,<1",
     "dbt-core>=1.9,<2",
     "dbt-starrocks>=1.9,<2",
+    "dlt[mssql]>=1.0",
+    "pymssql>=2.3",
     "pymysql>=1.1.0",
     "ruamel-yaml>=0.19.1",
     "grpcio==1.81.1"
@@ -48,3 +50,8 @@ ignore = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+filterwarnings = [
+    # Emitted internally by dagster.evaluate_automation_conditions (automation_condition_tester.py),
+    # which calls AssetSelection.all(include_sources=True) itself; not actionable from our code.
+    "ignore:Parameter `include_sources` of function `AssetSelection.all`:dagster_shared.utils.warnings.BetaWarning",
+]

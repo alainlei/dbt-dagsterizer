@@ -51,14 +51,24 @@ def build_auto_dbt_job_specs() -> list[dict]:
             partitions = job_cfg.get("partitions")
             partitions_value = None
             if partitions is not None:
+                # Validate partition spec: daily or unpartitioned
                 if partitions not in {"daily", "unpartitioned"}:
-                    raise ValueError(f"Orchestration job '{job_name}' partitions must be daily|unpartitioned")
+                    raise ValueError(
+                        f"Orchestration job '{job_name}' partitions must be daily|unpartitioned"
+                    )
                 partitions_value = partitions
             else:
                 inferred = {idx.partitions_by_model.get(m) for m in models_list}
                 inferred.discard(None)
                 if len(inferred) == 1:
                     partitions_value = inferred.pop()
+                elif len(inferred) > 1:
+                    raise ValueError(
+                        f"Orchestration job '{job_name}' cannot mix different partition types. "
+                        f"Models {models_list} have conflicting partitions: {sorted(inferred)}. "
+                        f"Either: (1) Set explicit 'partitions' in the job config, or "
+                        f"(2) Split into separate jobs for each partition type"
+                    )
 
             specs.append(
                 models_job(

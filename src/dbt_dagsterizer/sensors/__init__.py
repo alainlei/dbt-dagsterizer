@@ -50,6 +50,7 @@ def get_sensors():
     )
     from .partition_change.detector.factory import build_dbt_partition_change_sensors
     from .partition_change.propagator.factory import build_partition_propagation_sensors
+    from .replication import get_replication_trigger_sensors
 
     automation_condition_sensor = dg.AutomationConditionSensorDefinition(
         "default_automation_condition_sensor",
@@ -70,5 +71,9 @@ def get_sensors():
             specs=build_auto_partition_change_propagation_specs() + manual_specs,
             jobs_by_name=get_dbt_jobs_by_name(),
         )
+
+    # Replication trigger sensors: watch upstream dbt materializations and
+    # trigger replication jobs per partition.
+    sensors += get_replication_trigger_sensors()
 
     return sensors

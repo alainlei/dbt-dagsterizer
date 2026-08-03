@@ -16,9 +16,11 @@ from ..dbt.manifest_prepare import (
 )
 from ..orchestration_config import (
     delete_group_job,
+    delete_ssrs_report,
     derive_job_name_for_model,
     resolve_orchestration_path,
     set_group_job,
+    set_ssrs_report,
 )
 from ..orchestration_config import (
     index as index_orch,
@@ -30,6 +32,9 @@ from ..orchestration_config import (
     set_asset_job as orch_set_asset_job,
 )
 from ..orchestration_config import (
+    set_daily_config as orch_set_daily_config,
+)
+from ..orchestration_config import (
     set_partition as orch_set_partition,
 )
 from ..orchestration_config import (
@@ -37,6 +42,9 @@ from ..orchestration_config import (
 )
 from ..orchestration_config import (
     set_partition_change_propagation as orch_set_propagation,
+)
+from ..orchestration_config import (
+    set_replication_entry as orch_set_replication_entry,
 )
 from ..orchestration_config import (
     set_schedule as orch_set_schedule,
@@ -238,8 +246,10 @@ def build_meta_group() -> click.Group:
         prepare: bool,
         parse: bool,
     ) -> None:
+        # Handle partition type
         if partition_type not in {"daily", "unpartitioned"}:
             raise click.ClickException("--type must be one of daily|unpartitioned")
+        partition_value = partition_type
 
         dbt_project_path = resolve_dir_arg(dbt_project_dir)
         if not dbt_project_path.exists():
@@ -258,7 +268,7 @@ def build_meta_group() -> click.Group:
         target = orchestration_path(dbt_project_dir=dbt_project_path, path_=path_)
         data = load_orch(target)
         for m in selected:
-            orch_set_partition(data=data, model=m, partition=partition_type)
+            orch_set_partition(data=data, model=m, partition=partition_value)
         save_orchestration_with_validation(target=target, data=data, dbt_project_dir=dbt_project_path, prepare=prepare)
         if parse:
             run_dbt_parse(dbt_project_dir=dbt_project_path, dbt_profiles_dir=dbt_project_path, dbt_target=_default_dbt_target())
@@ -584,6 +594,82 @@ def build_meta_group() -> click.Group:
             parse=parse,
         )
 
+    @meta.group("replication")
+    def meta_replication() -> None:
+        """Configure StarRocks-to-SQL Server replication via dlt."""
+        pass
+
+    @meta_replication.command("entry")
+    @click.option("--dbt-project-dir", default="./dbt_project", show_default=True)
+    @click.option("--path", "path_", default="dagsterization.yml", show_default=True)
+    @click.option("--model", required=True, help="dbt model name to replicate")
+    @click.option("--enabled/--disabled", default=True, show_default=True)
+    @click.option("--destination-table", default="", help="Target table in SQL Server (default: model name)")
+    @click.option("--destination-schema", default="", help="Target schema in SQL Server (default: dbo)")
+    @click.option(
+        "--write-disposition",
+        default="replace",
+        show_default=True,
+        type=click.Choice(["append", "replace", "merge"], case_sensitive=False),
+        help="dlt write disposition",
+    )
+    @click.option(
+        "--partition-column",
+        default="",
+        help="Column to filter by for partition-aware replication (required for partitioned models)",
+    )
+    @click.option(
+        "--primary-key",
+        default="",
+        help="Single column name used as the primary key in the destination table",
+    )
+    @click.option("--prepare/--no-prepare", default=True, show_default=True)
+    @click.option("--parse/--no-parse", default=False, show_default=True)
+    def meta_replication_entry(
+        dbt_project_dir: str,
+        path_: str,
+        model: str,
+        enabled: bool,
+        destination_table: str,
+        destination_schema: str,
+        write_disposition: str,
+        partition_column: str,
+        primary_key: str,
+        prepare: bool,
+        parse: bool,
+    ) -> None:
+        dbt_project_path = resolve_dir_arg(dbt_project_dir)
+        if not dbt_project_path.exists():
+            raise click.ClickException(f"dbt project dir does not exist: {dbt_project_path}")
+
+        target = orchestration_path(dbt_project_dir=dbt_project_path, path_=path_)
+        data = load_orch(target)
+
+        # Ensure replication is enabled when adding an entry
+        repl = data.setdefault("replication", {})
+        repl["enabled"] = True
+
+        orch_set_replication_entry(
+            data=data,
+            model=model,
+            enabled=enabled,
+            destination_table=destination_table or None,
+            destination_schema=destination_schema or None,
+            write_disposition=write_disposition,
+            partition_column=partition_column or None,
+            primary_key=primary_key or None,
+        )
+        save_orchestration_with_validation(
+            target=target, data=data, dbt_project_dir=dbt_project_path, prepare=prepare
+        )
+        if parse:
+            run_dbt_parse(
+                dbt_project_dir=dbt_project_path,
+                dbt_profiles_dir=dbt_project_path,
+                dbt_target=_default_dbt_target(),
+            )
+        click.echo(str(target))
+
     @meta.command("validate")
     @click.option("--dbt-project-dir", default="./dbt_project", show_default=True)
     @click.option("--path", "path_", default="dagsterization.yml", show_default=True)
@@ -626,6 +712,37 @@ def build_meta_group() -> click.Group:
             raise click.ClickException(f"Validation failed with {len(errors)} error(s)")
         click.echo("OK")
 
+    @meta.command("partition-config")
+    @click.option("--dbt-project-dir", default="./dbt_project", show_default=True)
+    @click.option("--path", "path_", default="dagsterization.yml", show_default=True)
+    @click.option(
+        "--include-current-day-partition/--no-include-current-day-partition",
+        default=None,
+        help="Include today's partition in DailyPartitionsDefinition",
+    )
+    @click.option("--prepare/--no-prepare", default=True, show_default=True)
+    def meta_partition_config(
+        dbt_project_dir: str,
+        path_: str,
+        include_current_day_partition: bool | None,
+        prepare: bool,
+    ) -> None:
+        """Configure daily partition definition parameters."""
+        dbt_project_path = resolve_dir_arg(dbt_project_dir)
+        if not dbt_project_path.exists():
+            raise click.ClickException(f"dbt project dir does not exist: {dbt_project_path}")
+
+        target = orchestration_path(dbt_project_dir=dbt_project_path, path_=path_)
+        data = load_orch(target)
+        orch_set_daily_config(data=data, include_current_day_partition=include_current_day_partition)
+        save_orchestration_with_validation(
+            target=target,
+            data=data,
+            dbt_project_dir=dbt_project_path,
+            prepare=prepare,
+        )
+        click.echo(str(target))
+
     @meta.command("timezone")
     @click.option("--dbt-project-dir", default="./dbt_project", show_default=True)
     @click.option("--path", "path_", default="dagsterization.yml", show_default=True)
@@ -651,6 +768,62 @@ def build_meta_group() -> click.Group:
             dbt_project_dir=dbt_project_path,
             prepare=prepare,
         )
+        click.echo(str(target))
+
+    @meta.command("report")
+    @click.option("--dbt-project-dir", default="./dbt_project", show_default=True)
+    @click.option("--path", "path_", default="dagsterization.yml", show_default=True)
+    @click.option("--name", required=True, help="Report identifier (unique per project)")
+    @click.option("--model", required=True, help="dbt model whose materialization triggers the report")
+    @click.option("--subscription-description", required=True, help="SSRS subscription description used to look up its SQL Server Agent job")
+    @click.option("--enabled/--disabled", default=True, show_default=True)
+    @click.option("--prepare/--no-prepare", default=True, show_default=True)
+    def meta_report(
+        dbt_project_dir: str,
+        path_: str,
+        name: str,
+        model: str,
+        subscription_description: str,
+        enabled: bool,
+        prepare: bool,
+    ) -> None:
+        """Configure an SSRS subscription trigger after a dbt model materializes."""
+        dbt_project_path = resolve_dir_arg(dbt_project_dir)
+        if not dbt_project_path.exists():
+            raise click.ClickException(f"dbt project dir does not exist: {dbt_project_path}")
+
+        target = orchestration_path(dbt_project_dir=dbt_project_path, path_=path_)
+        data = load_orch(target)
+        set_ssrs_report(
+            data=data,
+            name=name,
+            model=model,
+            subscription_description=subscription_description,
+            enabled=enabled,
+        )
+        save_orchestration_with_validation(target=target, data=data, dbt_project_dir=dbt_project_path, prepare=prepare)
+        click.echo(str(target))
+
+    @meta.command("report-delete")
+    @click.option("--dbt-project-dir", default="./dbt_project", show_default=True)
+    @click.option("--path", "path_", default="dagsterization.yml", show_default=True)
+    @click.option("--name", required=True)
+    @click.option("--prepare/--no-prepare", default=True, show_default=True)
+    def meta_report_delete(
+        dbt_project_dir: str,
+        path_: str,
+        name: str,
+        prepare: bool,
+    ) -> None:
+        dbt_project_path = resolve_dir_arg(dbt_project_dir)
+        if not dbt_project_path.exists():
+            raise click.ClickException(f"dbt project dir does not exist: {dbt_project_path}")
+
+        target = orchestration_path(dbt_project_dir=dbt_project_path, path_=path_)
+        data = load_orch(target)
+        if not delete_ssrs_report(data=data, name=name):
+            raise click.ClickException(f"Report not found: {name}")
+        save_orchestration_with_validation(target=target, data=data, dbt_project_dir=dbt_project_path, prepare=prepare)
         click.echo(str(target))
 
     return meta

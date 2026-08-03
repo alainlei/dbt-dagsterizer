@@ -330,6 +330,40 @@ Notes:
 - For backward compatibility, legacy manual specs that only provide `upstream_dbt_model` are upgraded to relation-based upstream keys at runtime when the model exists in the manifest.
 - Manual Python specs are an escape hatch and are intentionally discouraged because they can be brittle across upgrades. Prefer defining propagators in `dagsterization.yml` using this CLI.
 
+### `meta report`
+
+Creates/updates an SSRS report entry in `dagsterization.yml`. The report triggers a pre-defined SSRS subscription (via its SQL Server Agent job) after the given dbt model materializes.
+
+```bash
+dbt-dagsterizer meta report \
+  --name daily_sales \
+  --model fct_sales_daily \
+  --subscription-description "Daily sales report subscription" \
+  --enabled
+```
+
+Flags:
+
+- `--name`: unique report name; becomes the Dagster asset key `ssrs/<name>`
+- `--model`: dbt model whose materialization triggers the report (must exist in the manifest)
+- `--subscription-description`: SSRS subscription description used to look up its SQL Server Agent job (must be unique on the report server)
+- `--enabled/--disabled`: when enabled, the report asset auto-materializes eagerly after the upstream model (default: enabled)
+- `--prepare/--no-prepare`: when enabled, runs `dbt parse` if the manifest is missing or stale
+
+Notes:
+
+- The SSRS agent connection is configured via environment variables: `SSRS_DB_HOST` (required), `SSRS_DB_PORT` (default `1433`), `SSRS_DB_USERNAME`, `SSRS_DB_PASSWORD`, `SSRS_DB_DATABASE` (default `msdb`), and `SSRS_DB_TIMEOUT_SECONDS` (default `60`).
+- The subscription lookup expects the SSRS catalog database to be named `ReportServer` (not configurable today).
+- See [dagsterization-yml.md](dagsterization-yml.md) (SSRS Reports section) for details on how the subscription lookup works.
+
+### `meta report-delete`
+
+Deletes an SSRS report entry by name.
+
+```bash
+dbt-dagsterizer meta report-delete --name daily_sales
+```
+
 ### `macros sync`
 
 Syncs namespaced macro templates shipped with `dbt-dagsterizer` into a dbt project at `macros/dbt_dagsterizer/`.

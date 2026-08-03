@@ -52,7 +52,10 @@ def _build_daily_partitioned_schedule(
     return _schedule
 
 
-def build_dbt_schedules(schedule_specs, jobs_by_name):
+def build_dbt_schedules(
+    schedule_specs,
+    jobs_by_name,
+):
     duplicated = set()
     seen = set()
     for spec in schedule_specs:

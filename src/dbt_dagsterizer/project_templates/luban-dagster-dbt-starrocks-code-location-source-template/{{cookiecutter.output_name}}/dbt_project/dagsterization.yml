@@ -18,6 +18,8 @@ partitions:
     - orders
     - fact_customer_orders_daily
     - fact_orders_daily
+  # daily_config:
+  #   include_current_day_partition: true  # Makes today's partition available (default: false)
 
 schedules:
   orders_anchor_daily_schedule:

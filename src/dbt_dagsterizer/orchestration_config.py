@@ -1,12 +1,24 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, MutableMapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ruamel.yaml import YAML
+
+
+@dataclass(frozen=True)
+class ReplicationEntry:
+    """Configuration for a single replication entry (StarRocks -> SQL Server)."""
+    model: str
+    enabled: bool
+    destination_table: str
+    destination_schema: str
+    write_disposition: str
+    partition_column: str | None
+    primary_key: str | None = None
 
 
 def _yaml() -> YAML:
@@ -50,6 +62,8 @@ def load_or_create(path: Path) -> MutableMapping[str, Any]:
             "partitions": {},
             "schedules": {},
             "partition_change": {"detectors": [], "propagators": []},
+            "replication": {"enabled": False, "entries": []},
+            "ssrs_reports": [],
         }
 
     with path.open("r", encoding="utf-8") as f:
@@ -63,6 +77,8 @@ def load_or_create(path: Path) -> MutableMapping[str, Any]:
             "partitions": {},
             "schedules": {},
             "partition_change": {"detectors": [], "propagators": []},
+            "replication": {"enabled": False, "entries": []},
+            "ssrs_reports": [],
         }
     if not isinstance(data, MutableMapping):
         raise ValueError(f"Orchestration config must be a mapping: {path}")
@@ -87,6 +103,21 @@ def load_or_create(path: Path) -> MutableMapping[str, Any]:
             if "propagators" not in pc and "propagations" in pc:
                 pc["propagators"] = pc.get("propagations")
                 del pc["propagations"]
+
+    if "replication" not in data:
+        data["replication"] = {"enabled": False, "entries": []}
+    else:
+        repl = data.get("replication")
+        if isinstance(repl, MutableMapping):
+            if "enabled" not in repl:
+                repl["enabled"] = False
+            if "entries" not in repl:
+                repl["entries"] = []
+        else:
+            data["replication"] = {"enabled": False, "entries": []}
+
+    if "ssrs_reports" not in data:
+        data["ssrs_reports"] = []
 
     return data
 
@@ -127,10 +158,13 @@ def _ensure_list(parent: MutableMapping[str, Any], key: str) -> list[Any]:
 
 @dataclass(frozen=True)
 class OrchestrationIndex:
-    partitions_by_model: dict[str, str]
+    partitions_by_model: dict[str, str]  # model -> "daily"|"unpartitioned"
     asset_job_models: set[str]
     group_job_by_model: dict[str, str]
+    daily_include_current_day_partition: bool = False  # DailyPartitionsDefinition end_offset from daily_config (true -> end_offset=1)
     timezone: str = "UTC"  # Global schedule execution timezone
+    replication_enabled: bool = False
+    replication_entries: dict[str, ReplicationEntry] = field(default_factory=dict)  # model_name -> config
 
 
 def index(data: Mapping[str, Any]) -> OrchestrationIndex:
@@ -138,16 +172,27 @@ def index(data: Mapping[str, Any]) -> OrchestrationIndex:
 
     partitions = data.get("partitions")
     if isinstance(partitions, Mapping):
+        # Process daily and unpartitioned partitions
         for p_type, models in partitions.items():
             if not isinstance(p_type, str):
                 continue
-            if p_type not in {"daily", "unpartitioned"}:
-                continue
-            if not isinstance(models, list):
-                continue
-            for m in models:
-                if isinstance(m, str) and m.strip():
-                    partitions_by_model[m.strip()] = p_type
+            if p_type in {"daily", "unpartitioned"}:
+                if not isinstance(models, list):
+                    continue
+                for m in models:
+                    if isinstance(m, str) and m.strip():
+                        partitions_by_model[m.strip()] = p_type
+
+    # Parse daily partition config
+    daily_include_current_day_partition = False
+    if isinstance(partitions, Mapping):
+        daily_config = partitions.get("daily_config")
+        if isinstance(daily_config, Mapping):
+            raw_include_current_day_partition = daily_config.get("include_current_day_partition")
+            if raw_include_current_day_partition is not None:
+                if not isinstance(raw_include_current_day_partition, bool):
+                    raise ValueError("partitions.daily_config.include_current_day_partition must be a boolean")
+                daily_include_current_day_partition = raw_include_current_day_partition
 
     asset_job_models: set[str] = set()
     asset_jobs = data.get("asset_jobs")
@@ -178,11 +223,48 @@ def index(data: Mapping[str, Any]) -> OrchestrationIndex:
     # Parse global timezone
     timezone = normalize_timezone(data.get("timezone"), default="UTC")
 
+    replication_enabled = False
+    replication_entries: dict[str, ReplicationEntry] = {}
+    repl = data.get("replication")
+    if isinstance(repl, Mapping):
+        raw_enabled = repl.get("enabled")
+        if isinstance(raw_enabled, bool):
+            replication_enabled = raw_enabled
+        entries = repl.get("entries")
+        if isinstance(entries, list):
+            for entry in entries:
+                if not isinstance(entry, Mapping):
+                    continue
+                model = entry.get("model")
+                if not isinstance(model, str) or not model.strip():
+                    continue
+                model = model.strip()
+                raw_primary_key = entry.get("primary_key")
+                primary_key: str | None = None
+                if isinstance(raw_primary_key, str) and raw_primary_key.strip():
+                    primary_key = raw_primary_key.strip()
+                replication_entries[model] = ReplicationEntry(
+                    model=model,
+                    enabled=bool(entry.get("enabled", True)),
+                    destination_table=str(entry.get("destination_table") or model),
+                    destination_schema=str(entry.get("destination_schema") or "dbo"),
+                    write_disposition=str(entry.get("write_disposition") or "replace"),
+                    partition_column=(
+                        str(entry.get("partition_column")).strip()
+                        if isinstance(entry.get("partition_column"), str) and entry.get("partition_column").strip()
+                        else None
+                    ),
+                    primary_key=primary_key,
+                )
+
     return OrchestrationIndex(
         partitions_by_model=partitions_by_model,
         asset_job_models=asset_job_models,
         group_job_by_model=group_job_by_model,
+        daily_include_current_day_partition=daily_include_current_day_partition,
         timezone=timezone,
+        replication_enabled=replication_enabled,
+        replication_entries=replication_entries,
     )
 
 
@@ -196,12 +278,41 @@ def set_timezone(*, data: MutableMapping[str, Any], timezone: str) -> None:
     data["timezone"] = normalize_timezone(timezone, default="UTC")
 
 
+def set_daily_config(
+    *,
+    data: MutableMapping[str, Any],
+    include_current_day_partition: bool | None = None,
+) -> None:
+    """Set daily partition configuration.
+
+    Args:
+        data: Orchestration config dict
+        include_current_day_partition: Whether today's partition should be available
+    """
+    partitions = _ensure_mapping(data, "partitions")
+    if include_current_day_partition is not None:
+        daily_config = partitions.get("daily_config")
+        if not isinstance(daily_config, MutableMapping):
+            partitions["daily_config"] = {}
+            daily_config = partitions["daily_config"]
+        daily_config["include_current_day_partition"] = bool(include_current_day_partition)
+
+
 def set_partition(*, data: MutableMapping[str, Any], model: str, partition: str | None) -> None:
+    """Set partition for a model.
+    
+    Args:
+        data: Orchestration config dict
+        model: Model name
+        partition: Partition spec ("daily", "unpartitioned", or None)
+    """
     model = model.strip()
     if not model:
         return
 
     partitions = _ensure_mapping(data, "partitions")
+    
+    # Remove model from all partition assignments (daily and unpartitioned)
     for p_type in ["daily", "unpartitioned"]:
         models = partitions.get(p_type)
         if isinstance(models, list):
@@ -209,9 +320,12 @@ def set_partition(*, data: MutableMapping[str, Any], model: str, partition: str 
 
     if partition is None:
         return
+    
+    # Validate partition spec
     if partition not in {"daily", "unpartitioned"}:
         raise ValueError("partition must be one of daily|unpartitioned")
 
+    # Add to the appropriate partition list
     models = partitions.get(partition)
     if not isinstance(models, list):
         models = []
@@ -393,6 +507,113 @@ def set_partition_change_propagation(
 
     propagations_filtered.append(entry)
     pc["propagators"] = propagations_filtered
+
+
+def set_replication_entry(
+    *,
+    data: MutableMapping[str, Any],
+    model: str,
+    enabled: bool,
+    destination_table: str | None,
+    destination_schema: str | None,
+    write_disposition: str | None,
+    partition_column: str | None,
+    primary_key: str | None = None,
+) -> None:
+    """Add or update a replication entry for a dbt model.
+
+    Args:
+        data: Orchestration config dict
+        model: dbt model name to replicate
+        enabled: Whether this replication entry is active
+        destination_table: Target table name in SQL Server (default: model name)
+        destination_schema: Target schema in SQL Server (default: dbo)
+        write_disposition: dlt write disposition - "append", "replace", or "merge" (default: replace)
+        partition_column: Column to filter by for partition-aware replication (optional)
+        primary_key: Single column name used as the primary key in the destination table (applies to all write dispositions)
+    """
+    model = model.strip()
+    if not model:
+        raise ValueError("replication entry model must be non-empty")
+    if write_disposition is not None and write_disposition not in {"append", "replace", "merge"}:
+        raise ValueError('replication entry write_disposition must be "append", "replace", or "merge"')
+
+    repl = _ensure_mapping(data, "replication")
+    entries = _ensure_list(repl, "entries")
+
+    entries_filtered: list[dict[str, Any]] = []
+    for e in entries:
+        if isinstance(e, Mapping) and e.get("model") == model:
+            continue
+        if isinstance(e, dict):
+            entries_filtered.append(e)
+
+    entry: dict[str, Any] = {
+        "model": model,
+        "enabled": bool(enabled),
+    }
+    entry["destination_table"] = destination_table.strip() if destination_table and destination_table.strip() else model
+    entry["destination_schema"] = destination_schema.strip() if destination_schema and destination_schema.strip() else "dbo"
+    entry["write_disposition"] = write_disposition.strip() if write_disposition and write_disposition.strip() else "replace"
+    if partition_column and partition_column.strip():
+        entry["partition_column"] = partition_column.strip()
+    if primary_key and primary_key.strip():
+        entry["primary_key"] = primary_key.strip()
+
+    entries_filtered.append(entry)
+    repl["entries"] = entries_filtered
+
+
+def set_ssrs_report(
+    *,
+    data: MutableMapping[str, Any],
+    name: str,
+    model: str,
+    subscription_description: str,
+    enabled: bool,
+) -> None:
+    name = name.strip()
+    if not name:
+        raise ValueError("report name must be non-empty")
+    model = model.strip()
+    if not model:
+        raise ValueError("report model must be non-empty")
+    subscription_description = subscription_description.strip()
+    if not subscription_description:
+        raise ValueError("subscription_description must be non-empty")
+
+    entry: dict[str, Any] = {
+        "name": name,
+        "model": model,
+        "subscription_description": subscription_description,
+        "enabled": bool(enabled),
+    }
+
+    reports = _ensure_list(data, "ssrs_reports")
+
+    reports_filtered: list[dict[str, Any]] = []
+    for r in reports:
+        if isinstance(r, Mapping) and r.get("name") == name:
+            continue
+        if isinstance(r, dict):
+            reports_filtered.append(r)
+
+    reports_filtered.append(entry)
+    data["ssrs_reports"] = reports_filtered
+
+
+def delete_ssrs_report(*, data: MutableMapping[str, Any], name: str) -> bool:
+    name = name.strip()
+    if not name:
+        return False
+    reports = data.get("ssrs_reports")
+    if not isinstance(reports, list):
+        return False
+    reports_filtered = [r for r in reports if not (isinstance(r, Mapping) and r.get("name") == name)]
+    if len(reports_filtered) == len(reports):
+        return False
+    data["ssrs_reports"] = reports_filtered
+    return True
 
 
 def derive_job_name_for_model(index: OrchestrationIndex, *, model: str) -> str | None:

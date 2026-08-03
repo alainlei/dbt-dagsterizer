@@ -5,6 +5,21 @@ import os
 import dagster as dg
 from dagster_dbt import get_asset_keys_by_output_name_for_source
 
+DEFAULT_SOURCE_GROUP_NAME = "source"
+
+
+def _resolve_source_group_name(spec: dict) -> str:
+    """Resolve the Dagster group name for an observable source asset.
+
+    Uses the user-defined group from `meta.luban.observe.group` in sources.yml
+    when present; otherwise falls back to the default "source" group.
+    """
+    group = spec.get("group")
+    if group is None:
+        return DEFAULT_SOURCE_GROUP_NAME
+    group = str(group).strip()
+    return group or DEFAULT_SOURCE_GROUP_NAME
+
 
 def _quoted_identifier(identifier: str) -> str:
     if "." not in identifier:
@@ -24,12 +39,28 @@ def build_observable_source_assets(
     source_db_env_var_map = source_db_env_var_map or {"ods": "STARROCKS_ODS_DB"}
     source_db_default_map = source_db_default_map or {}
 
-    dbt_assets_seq = dbt_assets if isinstance(dbt_assets, list) else [dbt_assets]
+    # Handle multiple dbt assets (from partition-type separation)
+    # We need to merge them for source asset resolution
+    dbt_assets_list = dbt_assets if isinstance(dbt_assets, list) else [dbt_assets]
+    
+    # Handle empty list case
+    if not dbt_assets_list:
+        raise ValueError("dbt_assets cannot be empty")
+    
+    # If there's only one dbt_assets, use it directly
+    if len(dbt_assets_list) == 1:
+        dbt_assets_for_sources = dbt_assets_list[0]
+    else:
+        # Multiple dbt_assets: we need to use the first one that has source assets
+        # or combine them. For now, use the first one as the primary.
+        # The source assets should be present in all partition types anyway.
+        dbt_assets_for_sources = dbt_assets_list[0]
 
     source_names = {spec["source"] for spec in source_specs}
     keys_by_source_table = {}
     for source in source_names:
-        keys_by_table = get_asset_keys_by_output_name_for_source(dbt_assets_seq, source)
+        # Pass as a list with single element to satisfy the "exactly one" invariant
+        keys_by_table = get_asset_keys_by_output_name_for_source([dbt_assets_for_sources], source)
         keys_by_source_table[source] = keys_by_table
 
     def resolve_source_asset_key(source_name: str, table_name: str) -> dg.AssetKey:
@@ -70,7 +101,7 @@ def build_observable_source_assets(
 
         @dg.observable_source_asset(
             key=resolve_source_asset_key(source_name, table_name),
-            group_name="source",
+            group_name=_resolve_source_group_name(spec),
             required_resource_keys={"starrocks"},
         )
         def _observable(context) -> dg.DataVersion:

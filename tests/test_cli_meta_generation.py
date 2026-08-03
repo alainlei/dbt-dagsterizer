@@ -193,3 +193,68 @@ def test_parse_flag_invokes_runner(tmp_path: Path, monkeypatch):
     )
     assert result.exit_code == 0
     assert called["count"] == 1
+
+
+def test_partition_config_cli_command(tmp_path: Path):
+    """partition-config CLI command writes daily_config.include_current_day_partition to dagsterization.yml."""
+    dbt_project = tmp_path / "dbt_project"
+    dbt_project.mkdir(parents=True)
+
+    runner = CliRunner()
+
+    # Init first
+    result = runner.invoke(
+        cli,
+        ["meta", "init", "--dbt-project-dir", str(dbt_project), "--no-parse"],
+    )
+    assert result.exit_code == 0
+
+    # Set partition-config with --include-current-day-partition
+    result = runner.invoke(
+        cli,
+        [
+            "meta",
+            "partition-config",
+            "--dbt-project-dir",
+            str(dbt_project),
+            "--include-current-day-partition",
+            "--no-prepare",
+        ],
+    )
+    assert result.exit_code == 0
+
+    orch_path = dbt_project / "dagsterization.yml"
+    data = _load_yaml(orch_path)
+    assert data["partitions"]["daily_config"]["include_current_day_partition"] is True
+
+
+def test_partition_config_cli_no_include_current_day_partition(tmp_path: Path):
+    """partition-config CLI command with --no-include-current-day-partition writes false."""
+    dbt_project = tmp_path / "dbt_project"
+    dbt_project.mkdir(parents=True)
+
+    runner = CliRunner()
+
+    # Init first
+    result = runner.invoke(
+        cli,
+        ["meta", "init", "--dbt-project-dir", str(dbt_project), "--no-parse"],
+    )
+    assert result.exit_code == 0
+
+    result = runner.invoke(
+        cli,
+        [
+            "meta",
+            "partition-config",
+            "--dbt-project-dir",
+            str(dbt_project),
+            "--no-include-current-day-partition",
+            "--no-prepare",
+        ],
+    )
+    assert result.exit_code == 0
+
+    orch_path = dbt_project / "dagsterization.yml"
+    data = _load_yaml(orch_path)
+    assert data["partitions"]["daily_config"]["include_current_day_partition"] is False

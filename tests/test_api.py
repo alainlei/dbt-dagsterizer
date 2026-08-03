@@ -17,4 +17,4 @@ def test_build_definitions_skeleton(tmp_path: Path):
     (dbt_project_dir / "packages.yml").write_text("packages: []\n", encoding="utf-8")
     defs = build_definitions(dbt_project_dir=dbt_project_dir)
     assert defs is not None
-    assert len(defs.assets) == 1
+    assert len(defs.assets) == 2  # version_info + project_ready

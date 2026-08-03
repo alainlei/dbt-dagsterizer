@@ -65,6 +65,7 @@ def build_dbt_partition_change_sensors(*, specs: list[dict]) -> list[dg.SensorDe
         default_status = dg.DefaultSensorStatus.RUNNING if enabled else dg.DefaultSensorStatus.STOPPED
 
         partition_type = spec.get("partition_type", "daily")
+        
         if partition_type != "daily":
             raise ValueError(f"Unsupported partition_type: {partition_type}")
 

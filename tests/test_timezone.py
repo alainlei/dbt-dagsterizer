@@ -93,6 +93,7 @@ def test_index_raises_on_unknown_timezone():
         index(data)
 
 
+
 def test_set_timezone():
     """set_timezone writes the timezone to the config dict."""
     from dbt_dagsterizer.orchestration_config import set_timezone
@@ -127,6 +128,7 @@ def test_set_timezone_rejects_unknown_timezone():
     data = {"version": 1}
     with pytest.raises(ValueError, match="invalid timezone"):
         set_timezone(data=data, timezone="Mars/Olympus_Mons")
+
 
 
 # --- preset tests ---
