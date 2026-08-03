@@ -30,18 +30,7 @@ def validate_orchestration(
     issues: list[ValidationIssue] = []
     existing_models = existing_model_names(manifest)
     idx = index_orch(orchestration)
-    tags_by_model: dict[str, set[str]] = {}
-    nodes = manifest.get("nodes")
-    if isinstance(nodes, dict):
-        for props in nodes.values():
-            if not isinstance(props, dict) or props.get("resource_type") != "model":
-                continue
-            name = props.get("name")
-            if not isinstance(name, str) or not name.strip():
-                continue
-            tags = props.get("tags") or []
-            if isinstance(tags, list):
-                tags_by_model[name.strip()] = {str(t) for t in tags if isinstance(t, str) and t.strip()}
+    tags_by_model: dict[str, set[str]] | None = None
 
     for model in sorted(idx.asset_job_models):
         if model not in existing_models:
@@ -56,8 +45,23 @@ def validate_orchestration(
         if (
             model in existing_models
             and p_type == "daily"
-            and "materialize_at_startup" in tags_by_model.get(model, set())
+            and "materialize_at_startup" in (tags_by_model or {}).get(model, set())
         ):
+            if tags_by_model is None:
+                tags_by_model = {}
+                nodes = manifest.get("nodes")
+                if isinstance(nodes, dict):
+                    for props in nodes.values():
+                        if not isinstance(props, dict) or props.get("resource_type") != "model":
+                            continue
+                        name = props.get("name")
+                        if not isinstance(name, str) or not name.strip():
+                            continue
+                        tags = props.get("tags") or []
+                        if isinstance(tags, list):
+                            tags_by_model[name.strip()] = {
+                                str(t) for t in tags if isinstance(t, str) and t.strip()
+                            }
             issues.append(
                 ValidationIssue(
                     "warn",

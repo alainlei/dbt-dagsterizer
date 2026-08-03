@@ -540,7 +540,7 @@ ssrs_reports:
 | `name` | Unique report name; used for the asset key `ssrs/<name>` (non-alphanumeric characters are replaced with `_`) (required) | — |
 | `model` | dbt model name that triggers the report; must exist in the manifest (required) | — |
 | `subscription_description` | Description of the SSRS subscription in the ReportServer catalog; used to look up its SQL Server Agent job (required, must be unique on the report server) | — |
-| `enabled` | When `true`, the report auto-materializes eagerly after the upstream model | `true` |
+| `enabled` | When `true`, the report auto-materializes eagerly after the upstream model | `false` |
 
 ### SSRS Agent Connection
 

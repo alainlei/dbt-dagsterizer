@@ -18,8 +18,10 @@ def build_definitions(
     dbt_profiles_dir: str | Path | None = None,
     default_dbt_target: str | None = None,
 ) -> Definitions:
+    from .resources.dbt import get_dbt_project_dir
+
     if dbt_project_dir is None:
-        resolved_dbt_project_dir = (Path.cwd() / "dbt_project").resolve()
+        resolved_dbt_project_dir = get_dbt_project_dir()
     else:
         candidate = Path(dbt_project_dir).expanduser()
         resolved_dbt_project_dir = (
@@ -35,8 +37,7 @@ def build_definitions(
             candidate.resolve() if candidate.is_absolute() else (Path.cwd() / candidate).resolve()
         )
     env: dict[str, str] = {}
-    if dbt_project_dir is not None:
-        env["DBT_PROJECT_DIR"] = str(resolved_dbt_project_dir)
+    env["DBT_PROJECT_DIR"] = str(resolved_dbt_project_dir)
     if resolved_dbt_profiles_dir is not None:
         env["DBT_PROFILES_DIR"] = str(resolved_dbt_profiles_dir)
     if default_dbt_target is not None:
