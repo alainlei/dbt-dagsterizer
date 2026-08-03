@@ -130,12 +130,13 @@ Dagster group names are derived from dbt project layout and resource type:
 - For dbt models, the group name is the first folder under `models/`
 - For non-model dbt resources, the group falls back to the dbt resource type
 - If folder derivation is not available, dbt FQN is used as a fallback
+- For `sources.yml` source assets, the group is `source` by default and can be overridden per source/table via `meta.luban.group` (see Source observation)
 
 Examples:
 
 - `models/dwd/orders.sql` -> group `dwd`
 - `models/dws/fact_orders_daily.sql` -> group `dws`
-- `sources.yml` source assets -> group `source`
+- `sources.yml` source assets -> group `source` (or the `meta.luban.group` override)
 
 This makes the Dagster UI reflect the dbt project structure more naturally without additional Python configuration.
 
@@ -345,6 +346,45 @@ Rules:
 - `watermark_column` uses the resolved source database name automatically. `watermark_sql` runs as written, so include any needed database/schema qualification directly in the query.
 
 This drives observable source assets and the observation job/schedule.
+
+### Custom Dagster group for source assets
+
+Observable source assets are grouped under `source` in the Dagster UI by default. When several code locations share one Dagster UI, you can give each source its own group with `meta.luban.group` in `sources.yml`:
+
+```yaml
+sources:
+  - name: ods
+    tables:
+      - name: customers
+        meta:
+          luban:
+            group: ods_customers
+            observe:
+              watermark_column: ods_updated_at
+```
+
+You can also set the group once at the source level to apply it to every table in that source definition:
+
+```yaml
+sources:
+  - name: ods
+    meta:
+      luban:
+        group: ods_sources
+    tables:
+      - name: customers
+        meta:
+          luban:
+            observe:
+              watermark_column: ods_updated_at
+```
+
+Rules:
+
+- A table-level `meta.luban.group` wins over a source-level one.
+- Sources/tables without an explicit `group` fall back to the default `source` group.
+- The legacy `meta.luban.observe.group` placement is still accepted as a fallback when `meta.luban.group` is not set.
+- dbt validates `sources.yml` against a strict schema and rejects unknown top-level source/table properties (for example a top-level `group` sibling of `name`), so custom properties must live under `meta`.
 
 ## Optional overrides (escape hatch)
 
