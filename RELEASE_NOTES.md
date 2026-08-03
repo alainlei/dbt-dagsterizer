@@ -7,6 +7,35 @@ These notes are intended to be a polished companion to `CHANGELOG.md`:
 - `CHANGELOG.md` remains the cumulative project history.
 - This document provides concise, version-by-version release summaries that are easy to reuse for GitHub Releases and upgrade communication.
 
+## v0.4.0
+
+Release date: 2026-08-03
+
+### Summary
+
+`v0.4.0` adds optional StarRocks→SQL Server replication, SSRS subscription triggering, and row-count observability for dbt assets, and rounds out the operator workflow with clearer docs and safer defaults.
+
+### Added
+
+- Added optional StarRocks-to-MSSQL data replication using dlt, configured via `replication` entries in `dagsterization.yml`.
+- Added optional SSRS subscription triggering via `ssrs_reports` entries in `dagsterization.yml` (and `meta report` / `meta report-delete` CLI commands).
+- Added row-count observations for dbt assets (affected rows and total row count) to improve Dagster UI observability.
+- Added package version display in dbt asset descriptions to make deployed code-location versions easier to verify.
+- Added `partitions.daily_config.include_current_day_partition` to optionally include today’s partition for daily-partitioned orchestration.
+
+### Fixed
+
+- Fixed replication executor logging to avoid leaking URL-encoded credentials.
+- Fixed SSRS `enabled` defaults to be consistent across docs, CLI defaults, and runtime auto-configuration (defaults to enabled).
+- Fixed orchestration validation to warn reliably when `materialize_at_startup` is used on daily-partitioned models without scanning manifest tags unnecessarily.
+- Fixed `build_definitions()` environment handling to avoid overriding `DBT_PROJECT_DIR` unless explicitly provided.
+- Fixed rendered template test modules to remain syntactically valid before Cookiecutter rendering.
+
+### Upgrade Notes
+
+- No migration is required.
+- If you configure SSRS reports, `enabled` now defaults to `true` when omitted in `dagsterization.yml`; set `enabled: false` to opt out for specific reports.
+
 ## v0.3.3
 
 Release date: 2026-07-11

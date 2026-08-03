@@ -8,6 +8,14 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 ### Added
 
+### Fixed
+
+### Changed
+
+## [0.4.0] - 2026-08-03
+
+### Added
+
 - Added package version display to dbt asset descriptions in Dagster UI, showing `dbt_dagsterizer`, `dagster`, and `dagster_dbt` versions for each code location.
 - Added optional `include_current_day_partition` setting under `partitions.daily_config` in `dagsterization.yml` to include today's partition in the `DailyPartitionsDefinition` (useful for same-day materialization).
 - Added optional StarRocks-to-MSSQL data replication feature using dlt, configured via a `replication` section in `dagsterization.yml`.
