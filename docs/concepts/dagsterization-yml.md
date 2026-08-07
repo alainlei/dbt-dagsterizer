@@ -34,7 +34,7 @@ timezone: UTC                       # Global schedule execution timezone
 partitions:
   daily: []
   daily_config:
-    include_current_day_partition: false
+    include_current_day_partition: true
 jobs:                               # Grouped job definitions
   job_name:
     models: []
@@ -133,9 +133,9 @@ partitions:
 ```
 
 **Fields**:
-- `include_current_day_partition` (bool, default: `false`): Whether today's partition should be available in the `DailyPartitionsDefinition`.
-  - `false` (default): Only partitions ending *before* the current time are available (equivalent to `end_offset: 0`).
-  - `true`: Today's partition is also available (equivalent to `end_offset: 1`, useful for same-day processing).
+- `include_current_day_partition` (bool, default: `true`): Whether today's partition should be available in the `DailyPartitionsDefinition`.
+  - `true` (default): Today's partition is also available (equivalent to `end_offset: 1`, useful for same-day processing).
+  - `false`: Only partitions ending *before* the current time are available (equivalent to `end_offset: 0`).
 
 > **Note**: This is different from schedule `offset_days`, which controls *which partition* a schedule targets. `include_current_day_partition` controls the *set of available partitions* in the partition definition itself.
 

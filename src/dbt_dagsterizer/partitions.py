@@ -17,11 +17,11 @@ def get_daily_partitions_def(include_current_day_partition: bool | None = None) 
             "DAGSTER_DAILY_PARTITIONS_START_DATE must be set (YYYY-MM-DD) when using daily partitions"
         )
 
-    # Resolve end_offset from boolean flag: parameter > default(0)
-    if include_current_day_partition:
-        resolved_end_offset = 1
-    else:
+    # Resolve end_offset from boolean flag: parameter > default(include current day)
+    if include_current_day_partition is False:
         resolved_end_offset = 0
+    else:
+        resolved_end_offset = 1
 
     _daily_partitions_def = DailyPartitionsDefinition(
         start_date=start_date,

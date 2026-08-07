@@ -161,7 +161,7 @@ class OrchestrationIndex:
     partitions_by_model: dict[str, str]  # model -> "daily"|"unpartitioned"
     asset_job_models: set[str]
     group_job_by_model: dict[str, str]
-    daily_include_current_day_partition: bool = False  # DailyPartitionsDefinition end_offset from daily_config (true -> end_offset=1)
+    daily_include_current_day_partition: bool = True  # DailyPartitionsDefinition end_offset from daily_config (true -> end_offset=1)
     timezone: str = "UTC"  # Global schedule execution timezone
     replication_enabled: bool = False
     replication_entries: dict[str, ReplicationEntry] = field(default_factory=dict)  # model_name -> config
@@ -183,8 +183,8 @@ def index(data: Mapping[str, Any]) -> OrchestrationIndex:
                     if isinstance(m, str) and m.strip():
                         partitions_by_model[m.strip()] = p_type
 
-    # Parse daily partition config
-    daily_include_current_day_partition = False
+    # Parse daily partition config (defaults to True when not explicitly set)
+    daily_include_current_day_partition = True
     if isinstance(partitions, Mapping):
         daily_config = partitions.get("daily_config")
         if isinstance(daily_config, Mapping):

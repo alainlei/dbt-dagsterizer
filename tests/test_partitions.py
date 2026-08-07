@@ -125,14 +125,14 @@ def test_translator_automation_rules(monkeypatch, props, partitions_by_model, pr
 
 
 def test_daily_partitions_def_default_end_offset(monkeypatch):
-    """Default end_offset is 0 when no config is set."""
+    """Default end_offset is 1 when no config is set (current day partition included)."""
     from dbt_dagsterizer import partitions
 
     monkeypatch.setenv("DAGSTER_DAILY_PARTITIONS_START_DATE", "2024-01-01")
     monkeypatch.setattr(partitions, "_daily_partitions_def", None)
 
     result = partitions.get_daily_partitions_def()
-    assert result.end_offset == 0
+    assert result.end_offset == 1
 
 
 def test_daily_partitions_def_with_include_current_day_partition(monkeypatch):
@@ -196,11 +196,25 @@ def test_orchestration_index_include_current_day_partition():
     assert idx.daily_include_current_day_partition is True
 
 
-def test_orchestration_index_include_current_day_partition_defaults_to_false():
-    """Missing daily_config results in daily_include_current_day_partition=False."""
+def test_orchestration_index_include_current_day_partition_defaults_to_true():
+    """Missing daily_config results in daily_include_current_day_partition=True."""
     from dbt_dagsterizer.orchestration_config import index
 
     data = {"partitions": {"daily": ["orders"]}}
+    idx = index(data)
+    assert idx.daily_include_current_day_partition is True
+
+
+def test_orchestration_index_include_current_day_partition_explicit_false():
+    """Explicit include_current_day_partition=false overrides the default."""
+    from dbt_dagsterizer.orchestration_config import index
+
+    data = {
+        "partitions": {
+            "daily": ["orders"],
+            "daily_config": {"include_current_day_partition": False},
+        },
+    }
     idx = index(data)
     assert idx.daily_include_current_day_partition is False
 
