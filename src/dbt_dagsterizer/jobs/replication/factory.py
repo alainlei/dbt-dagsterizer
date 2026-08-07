@@ -41,6 +41,8 @@ def build_replication_jobs(job_specs: list[dict]) -> list:
         partitions_def = get_partitions_def(
             partition_type,
             include_current_day_partition=idx.daily_include_current_day_partition,
+            include_current_hour_partition=idx.hourly_include_current_hour_partition,
+            timezone=idx.timezone,
         )
 
         # Select the single replication asset by its key

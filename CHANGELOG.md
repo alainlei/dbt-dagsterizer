@@ -8,7 +8,28 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 ### Added
 
+- Added hourly partition support for dbt assets, schedules, and sensors alongside the existing daily partition strategy.
+  - New `hourly` partition type in `dagsterization.yml` under `partitions.hourly`, configured with `DAGSTER_HOURLY_PARTITIONS_START_DATE` (YYYY-MM-DD-HH:MM format).
+  - New `partitions.hourly_config` section with `include_current_hour_partition` (boolean, default `true`) to control whether the current hour's partition is available in the `HourlyPartitionsDefinition`.
+  - New `hourly_at` schedule type for hourly cadence schedules, with `offset_hours` and `lookback_hours` parameters analogous to the existing `offset_days`/`lookback_days` daily schedule parameters.
+  - New `hourly_at()` schedule preset in `schedules/dbt_config.py` for convenient hourly schedule creation with `offset_hours`, `lookback_hours`, and `minute` parameters.
+  - CLI `meta schedule --schedule-type hourly_at` support for creating hourly schedules via the command line.
+  - CLI `meta hourly-config` command for managing hourly partition configuration.
+  - Validation for `hourly_config` structure and `hourly` partition assignments in `cli_parts/validation.py`.
+- Added comprehensive test coverage for hourly partition functionality:
+  - `get_hourly_partitions_def()` env var enforcement, caching, end_offset resolution, and reset behavior.
+  - `get_partitions_def()` routing for `"hourly"`, `"daily"`, and unpartitioned specs.
+  - Orchestration config parsing for `hourly_config` and hourly partition assignments.
+  - `hourly_at()` schedule preset defaults, validation, cron format, and field propagation.
+  - Hourly schedule factory evaluation producing correct partition keys.
+
 ### Fixed
+
+- Fixed timezone propagation from `dagsterization.yml` to asset partition definitions. The `timezone` setting (e.g. `Asia/Macau`) is now correctly passed through to `DailyPartitionsDefinition` and `HourlyPartitionsDefinition` constructors so partition boundaries align with the configured timezone instead of always defaulting to UTC.
+  - Added `timezone` parameter to `get_daily_partitions_def()`, `get_hourly_partitions_def()`, and `get_partitions_def()` in `partitions.py`.
+  - Threaded `timezone` through dbt asset creation (`assets/dbt/assets.py`), dbt job factory (`jobs/dbt/factory.py`, `jobs/dbt/jobs.py`), replication asset factory (`assets/replication/factory.py`), and replication job factory (`jobs/replication/factory.py`).
+  - Made the singleton partition definition cache timezone-aware so changing the timezone correctly invalidates the cached definition.
+- Added timezone propagation tests verifying daily and hourly partition definitions respect the configured timezone, default to UTC when unspecified, and invalidate the cache on timezone changes.
 
 ### Changed
 

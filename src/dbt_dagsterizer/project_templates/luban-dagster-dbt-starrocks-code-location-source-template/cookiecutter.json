@@ -5,7 +5,7 @@
   "app_name": "",
   "package_name": "",
   "dagster_version": "1.13.12",
-  "dbt_dagsterizer_version": "0.4.0",
+  "dbt_dagsterizer_version": "",
   "dbt_dagsterizer_file_url": "",
   "default_env": "development",
   "schedule_timezone": "UTC",

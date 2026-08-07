@@ -60,6 +60,21 @@ def build_replication_schedules(schedule_specs: list[dict]) -> list:
 
             schedules.append(_daily_schedule)
 
+        elif partition_type == "hourly":
+            @dg.schedule(
+                name=schedule_name,
+                cron_schedule=cron_schedule,
+                job=job,
+                default_status=default_status,
+            )
+            def _hourly_schedule(context):
+                scheduled_time = context.scheduled_execution_time or datetime.now(timezone.utc)
+                partition_time = (scheduled_time - timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
+                partition_key = partition_time.strftime("%Y-%m-%d-%H:00")
+                return dg.RunRequest(partition_key=partition_key)
+
+            schedules.append(_hourly_schedule)
+
         else:
             raise ValueError(f"Unsupported partition_type: {partition_type}")
 

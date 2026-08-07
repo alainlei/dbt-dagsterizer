@@ -158,10 +158,11 @@ def _ensure_list(parent: MutableMapping[str, Any], key: str) -> list[Any]:
 
 @dataclass(frozen=True)
 class OrchestrationIndex:
-    partitions_by_model: dict[str, str]  # model -> "daily"|"unpartitioned"
+    partitions_by_model: dict[str, str]  # model -> "daily"|"hourly"|"unpartitioned"
     asset_job_models: set[str]
     group_job_by_model: dict[str, str]
     daily_include_current_day_partition: bool = True  # DailyPartitionsDefinition end_offset from daily_config (true -> end_offset=1)
+    hourly_include_current_hour_partition: bool = True  # HourlyPartitionsDefinition end_offset from hourly_config (true -> end_offset=1)
     timezone: str = "UTC"  # Global schedule execution timezone
     replication_enabled: bool = False
     replication_entries: dict[str, ReplicationEntry] = field(default_factory=dict)  # model_name -> config
@@ -176,7 +177,7 @@ def index(data: Mapping[str, Any]) -> OrchestrationIndex:
         for p_type, models in partitions.items():
             if not isinstance(p_type, str):
                 continue
-            if p_type in {"daily", "unpartitioned"}:
+            if p_type in {"daily", "hourly", "unpartitioned"}:
                 if not isinstance(models, list):
                     continue
                 for m in models:
@@ -193,6 +194,17 @@ def index(data: Mapping[str, Any]) -> OrchestrationIndex:
                 if not isinstance(raw_include_current_day_partition, bool):
                     raise ValueError("partitions.daily_config.include_current_day_partition must be a boolean")
                 daily_include_current_day_partition = raw_include_current_day_partition
+
+    # Parse hourly partition config (defaults to True when not explicitly set)
+    hourly_include_current_hour_partition = True
+    if isinstance(partitions, Mapping):
+        hourly_config = partitions.get("hourly_config")
+        if isinstance(hourly_config, Mapping):
+            raw_include_current_hour_partition = hourly_config.get("include_current_hour_partition")
+            if raw_include_current_hour_partition is not None:
+                if not isinstance(raw_include_current_hour_partition, bool):
+                    raise ValueError("partitions.hourly_config.include_current_hour_partition must be a boolean")
+                hourly_include_current_hour_partition = raw_include_current_hour_partition
 
     asset_job_models: set[str] = set()
     asset_jobs = data.get("asset_jobs")
@@ -262,6 +274,7 @@ def index(data: Mapping[str, Any]) -> OrchestrationIndex:
         asset_job_models=asset_job_models,
         group_job_by_model=group_job_by_model,
         daily_include_current_day_partition=daily_include_current_day_partition,
+        hourly_include_current_hour_partition=hourly_include_current_hour_partition,
         timezone=timezone,
         replication_enabled=replication_enabled,
         replication_entries=replication_entries,
@@ -298,13 +311,33 @@ def set_daily_config(
         daily_config["include_current_day_partition"] = bool(include_current_day_partition)
 
 
+def set_hourly_config(
+    *,
+    data: MutableMapping[str, Any],
+    include_current_hour_partition: bool | None = None,
+) -> None:
+    """Set hourly partition configuration.
+
+    Args:
+        data: Orchestration config dict
+        include_current_hour_partition: Whether the current hour's partition should be available
+    """
+    partitions = _ensure_mapping(data, "partitions")
+    if include_current_hour_partition is not None:
+        hourly_config = partitions.get("hourly_config")
+        if not isinstance(hourly_config, MutableMapping):
+            partitions["hourly_config"] = {}
+            hourly_config = partitions["hourly_config"]
+        hourly_config["include_current_hour_partition"] = bool(include_current_hour_partition)
+
+
 def set_partition(*, data: MutableMapping[str, Any], model: str, partition: str | None) -> None:
     """Set partition for a model.
     
     Args:
         data: Orchestration config dict
         model: Model name
-        partition: Partition spec ("daily", "unpartitioned", or None)
+        partition: Partition spec ("daily", "hourly", "unpartitioned", or None)
     """
     model = model.strip()
     if not model:
@@ -312,8 +345,8 @@ def set_partition(*, data: MutableMapping[str, Any], model: str, partition: str 
 
     partitions = _ensure_mapping(data, "partitions")
     
-    # Remove model from all partition assignments (daily and unpartitioned)
-    for p_type in ["daily", "unpartitioned"]:
+    # Remove model from all partition assignments (daily, hourly, and unpartitioned)
+    for p_type in ["daily", "hourly", "unpartitioned"]:
         models = partitions.get(p_type)
         if isinstance(models, list):
             partitions[p_type] = [m for m in models if not (isinstance(m, str) and m.strip() == model)]
@@ -322,8 +355,8 @@ def set_partition(*, data: MutableMapping[str, Any], model: str, partition: str 
         return
     
     # Validate partition spec
-    if partition not in {"daily", "unpartitioned"}:
-        raise ValueError("partition must be one of daily|unpartitioned")
+    if partition not in {"daily", "hourly", "unpartitioned"}:
+        raise ValueError("partition must be one of daily|hourly|unpartitioned")
 
     # Add to the appropriate partition list
     models = partitions.get(partition)
@@ -369,8 +402,8 @@ def set_group_job(
     if partitions is None:
         job.pop("partitions", None)
     else:
-        if partitions not in {"daily", "unpartitioned"}:
-            raise ValueError("partitions must be one of daily|unpartitioned")
+        if partitions not in {"daily", "hourly", "unpartitioned"}:
+            raise ValueError("partitions must be one of daily|hourly|unpartitioned")
         job["partitions"] = partitions
 
 
@@ -398,6 +431,8 @@ def set_schedule(
     lookback_days: int,
     offset_days: int = 1,
     enabled: bool,
+    lookback_hours: int = 0,
+    offset_hours: int = 1,
 ) -> None:
     name = name.strip()
     if not name:
@@ -405,19 +440,24 @@ def set_schedule(
     job_name = job_name.strip()
     if not job_name:
         raise ValueError("schedule job_name must be non-empty")
-    if schedule_type != "daily_at":
-        raise ValueError("schedule type must be 'daily_at'")
+    if schedule_type not in {"daily_at", "hourly_at"}:
+        raise ValueError("schedule type must be 'daily_at' or 'hourly_at'")
 
     schedules = _ensure_mapping(data, "schedules")
-    schedules[name] = {
-        "type": "daily_at",
+    entry: dict[str, Any] = {
+        "type": schedule_type,
         "job_name": job_name,
         "hour": int(hour),
         "minute": int(minute),
-        "lookback_days": int(lookback_days),
-        "offset_days": int(offset_days),
         "enabled": bool(enabled),
     }
+    if schedule_type == "daily_at":
+        entry["lookback_days"] = int(lookback_days)
+        entry["offset_days"] = int(offset_days)
+    elif schedule_type == "hourly_at":
+        entry["lookback_hours"] = int(lookback_hours)
+        entry["offset_hours"] = int(offset_hours)
+    schedules[name] = entry
 
 
 def set_partition_change_detector(

@@ -44,6 +44,30 @@ def _resolve_include_current_day() -> bool:
     return idx.daily_include_current_day_partition
 
 
+def _resolve_include_current_hour() -> bool:
+    """Load orchestration config and return ``include_current_hour_partition``."""
+    dbt_project_dir = get_dbt_project_dir()
+    cfg_path = resolve_orchestration_path(
+        dbt_project_dir=dbt_project_dir,
+        path_=Path(default_orchestration_path(dbt_project_dir=dbt_project_dir).name),
+    )
+    cfg = load_orch(cfg_path)
+    idx = index_orch(cfg)
+    return idx.hourly_include_current_hour_partition
+
+
+def _resolve_timezone() -> str:
+    """Load orchestration config and return the configured timezone."""
+    dbt_project_dir = get_dbt_project_dir()
+    cfg_path = resolve_orchestration_path(
+        dbt_project_dir=dbt_project_dir,
+        path_=Path(default_orchestration_path(dbt_project_dir=dbt_project_dir).name),
+    )
+    cfg = load_orch(cfg_path)
+    idx = index_orch(cfg)
+    return idx.timezone
+
+
 def build_replication_assets(specs: list[dict]) -> list[dg.AssetsDefinition]:
     """Build Dagster ``@asset`` definitions from replication specs.
 
@@ -56,6 +80,8 @@ def build_replication_assets(specs: list[dict]) -> list[dg.AssetsDefinition]:
         return []
 
     include_current_day = _resolve_include_current_day()
+    include_current_hour = _resolve_include_current_hour()
+    timezone = _resolve_timezone()
 
     assets: list[dg.AssetsDefinition] = []
     for spec in specs:
@@ -63,6 +89,8 @@ def build_replication_assets(specs: list[dict]) -> list[dg.AssetsDefinition]:
         partitions_def = get_partitions_def(
             partition_type,
             include_current_day_partition=include_current_day,
+            include_current_hour_partition=include_current_hour,
+            timezone=timezone,
         )
 
         source_relation = spec["source_relation"]
