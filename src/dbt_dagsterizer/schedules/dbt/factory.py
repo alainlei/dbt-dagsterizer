@@ -52,6 +52,51 @@ def _build_daily_partitioned_schedule(
     return _schedule
 
 
+def _build_hourly_partitioned_schedule(
+    *,
+    name: str,
+    cron_schedule: str,
+    job,
+    partition_offset_hours: int,
+    partition_lookback_hours: int,
+    dedupe_across_ticks: bool,
+    default_status: dg.DefaultScheduleStatus,
+    execution_timezone: str = "UTC",
+):
+    @dg.schedule(
+        name=name,
+        cron_schedule=cron_schedule,
+        job=job,
+        default_status=default_status,
+        execution_timezone=execution_timezone,
+    )
+    def _schedule(context):
+        scheduled_time = context.scheduled_execution_time or datetime.now(timezone.utc)
+
+        anchor_hour = scheduled_time - timedelta(hours=partition_offset_hours)
+        # Truncate to the start of the hour
+        anchor_hour = anchor_hour.replace(minute=0, second=0, microsecond=0)
+        run_requests = []
+        for i in range(partition_lookback_hours + 1):
+            partition_time = anchor_hour - timedelta(hours=i)
+            # Dagster HourlyPartitionsDefinition uses "YYYY-MM-DD-HH:MM" format
+            partition_key = partition_time.strftime("%Y-%m-%d-%H:00")
+            run_key = _with_optional_tick_suffix(
+                run_key=f"{name}:{partition_key}",
+                scheduled_time=scheduled_time,
+                dedupe_across_ticks=dedupe_across_ticks,
+            )
+            run_requests.append(
+                dg.RunRequest(
+                    partition_key=partition_key,
+                    run_key=run_key,
+                )
+            )
+        return run_requests
+
+    return _schedule
+
+
 def build_dbt_schedules(
     schedule_specs,
     jobs_by_name,
@@ -95,6 +140,29 @@ def build_dbt_schedules(
                 job=job,
                 partition_offset_days=partition_offset_days,
                 partition_lookback_days=partition_lookback_days,
+                dedupe_across_ticks=dedupe_across_ticks,
+                default_status=default_status,
+                execution_timezone=execution_timezone,
+            )
+            continue
+
+        if partition_type == "hourly":
+            partition_offset_days = int(spec.get("partition_offset_days", 0))
+            partition_lookback_days = int(spec.get("partition_lookback_days", 0))
+            if partition_offset_days != 0 or partition_lookback_days != 0:
+                raise ValueError(
+                    f"Hourly schedule '{spec['name']}' cannot set daily offset/lookback fields"
+                )
+
+            partition_offset_hours = int(spec.get("partition_offset_hours", 1))
+            partition_lookback_hours = int(spec.get("partition_lookback_hours", 0))
+            execution_timezone = normalize_timezone(spec.get("timezone"), default="UTC")
+            schedules_by_name[spec["name"]] = _build_hourly_partitioned_schedule(
+                name=spec["name"],
+                cron_schedule=spec["cron_schedule"],
+                job=job,
+                partition_offset_hours=partition_offset_hours,
+                partition_lookback_hours=partition_lookback_hours,
                 dedupe_across_ticks=dedupe_across_ticks,
                 default_status=default_status,
                 execution_timezone=execution_timezone,

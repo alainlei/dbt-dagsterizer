@@ -35,6 +35,9 @@ from ..orchestration_config import (
     set_daily_config as orch_set_daily_config,
 )
 from ..orchestration_config import (
+    set_hourly_config as orch_set_hourly_config,
+)
+from ..orchestration_config import (
     set_partition as orch_set_partition,
 )
 from ..orchestration_config import (
@@ -96,7 +99,7 @@ def build_meta_group() -> click.Group:
     @click.option("--tag", "tag_", default="", help="Select models by existing dbt tag")
     @click.option("--name", "job_name", required=True)
     @click.option("--include-upstream/--no-include-upstream", default=False, show_default=True)
-    @click.option("--partitions", default="", help="daily|unpartitioned|none")
+    @click.option("--partitions", default="", help="daily|hourly|unpartitioned|none")
     @click.option("--prepare/--no-prepare", default=True, show_default=True)
     @click.option("--parse/--no-parse", default=False, show_default=True)
     def meta_job(
@@ -125,8 +128,8 @@ def build_meta_group() -> click.Group:
             raise click.ClickException("No models selected (use --models or --tag)")
 
         partitions_value = partitions.strip().lower() or None
-        if partitions_value is not None and partitions_value not in {"daily", "unpartitioned", "none"}:
-            raise click.ClickException("--partitions must be one of daily|unpartitioned|none")
+        if partitions_value is not None and partitions_value not in {"daily", "hourly", "unpartitioned", "none"}:
+            raise click.ClickException("--partitions must be one of daily|hourly|unpartitioned|none")
         job_partitions = None if partitions_value in {None, "none"} else partitions_value
 
         target = orchestration_path(dbt_project_dir=dbt_project_path, path_=path_)
@@ -234,7 +237,7 @@ def build_meta_group() -> click.Group:
     @click.option("--path", "path_", default="dagsterization.yml", show_default=True)
     @click.option("--models", default="", help="Comma-separated model names")
     @click.option("--tag", "tag_", default="", help="Select models by existing dbt tag")
-    @click.option("--type", "partition_type", required=True, help="daily|unpartitioned")
+    @click.option("--type", "partition_type", required=True, help="daily|hourly|unpartitioned")
     @click.option("--prepare/--no-prepare", default=True, show_default=True)
     @click.option("--parse/--no-parse", default=False, show_default=True)
     def meta_partition(
@@ -247,8 +250,8 @@ def build_meta_group() -> click.Group:
         parse: bool,
     ) -> None:
         # Handle partition type
-        if partition_type not in {"daily", "unpartitioned"}:
-            raise click.ClickException("--type must be one of daily|unpartitioned")
+        if partition_type not in {"daily", "hourly", "unpartitioned"}:
+            raise click.ClickException("--type must be one of daily|hourly|unpartitioned")
         partition_value = partition_type
 
         dbt_project_path = resolve_dir_arg(dbt_project_dir)
@@ -374,10 +377,13 @@ def build_meta_group() -> click.Group:
     @click.option("--models", default="", help="Comma-separated model names")
     @click.option("--tag", "tag_", default="", help="Select models by existing dbt tag")
     @click.option("--name", required=True)
-    @click.option("--hour", type=int, required=True)
+    @click.option("--hour", type=int, default=0, show_default=True)
     @click.option("--minute", type=int, required=True)
     @click.option("--lookback-days", type=int, default=0, show_default=True)
     @click.option("--offset-days", type=int, default=1, show_default=True)
+    @click.option("--lookback-hours", type=int, default=0, show_default=True)
+    @click.option("--offset-hours", type=int, default=1, show_default=True)
+    @click.option("--schedule-type", type=click.Choice(["daily_at", "hourly_at"]), default="daily_at", show_default=True)
     @click.option("--enabled/--disabled", default=True, show_default=True)
     @click.option("--prepare/--no-prepare", default=True, show_default=True)
     @click.option("--parse/--no-parse", default=False, show_default=True)
@@ -391,6 +397,9 @@ def build_meta_group() -> click.Group:
         minute: int,
         lookback_days: int,
         offset_days: int,
+        lookback_hours: int,
+        offset_hours: int,
+        schedule_type: str,
         enabled: bool,
         prepare: bool,
         parse: bool,
@@ -403,6 +412,10 @@ def build_meta_group() -> click.Group:
             raise click.ClickException("--lookback-days must be >= 0")
         if offset_days < 0:
             raise click.ClickException("--offset-days must be >= 0")
+        if lookback_hours < 0:
+            raise click.ClickException("--lookback-hours must be >= 0")
+        if offset_hours < 0:
+            raise click.ClickException("--offset-hours must be >= 0")
 
         dbt_project_path = resolve_dir_arg(dbt_project_dir)
         if not dbt_project_path.exists():
@@ -431,11 +444,13 @@ def build_meta_group() -> click.Group:
             data=data,
             name=name,
             job_name=schedule_job_name,
-            schedule_type="daily_at",
+            schedule_type=schedule_type,
             hour=hour,
             minute=minute,
             lookback_days=lookback_days,
             offset_days=offset_days,
+            lookback_hours=lookback_hours,
+            offset_hours=offset_hours,
             enabled=enabled,
         )
         save_orchestration_with_validation(target=target, data=data, dbt_project_dir=dbt_project_path, prepare=prepare)
@@ -735,6 +750,37 @@ def build_meta_group() -> click.Group:
         target = orchestration_path(dbt_project_dir=dbt_project_path, path_=path_)
         data = load_orch(target)
         orch_set_daily_config(data=data, include_current_day_partition=include_current_day_partition)
+        save_orchestration_with_validation(
+            target=target,
+            data=data,
+            dbt_project_dir=dbt_project_path,
+            prepare=prepare,
+        )
+        click.echo(str(target))
+
+    @meta.command("hourly-config")
+    @click.option("--dbt-project-dir", default="./dbt_project", show_default=True)
+    @click.option("--path", "path_", default="dagsterization.yml", show_default=True)
+    @click.option(
+        "--include-current-hour-partition/--no-include-current-hour-partition",
+        default=None,
+        help="Include the current hour's partition in HourlyPartitionsDefinition",
+    )
+    @click.option("--prepare/--no-prepare", default=True, show_default=True)
+    def meta_hourly_config(
+        dbt_project_dir: str,
+        path_: str,
+        include_current_hour_partition: bool | None,
+        prepare: bool,
+    ) -> None:
+        """Configure hourly partition definition parameters."""
+        dbt_project_path = resolve_dir_arg(dbt_project_dir)
+        if not dbt_project_path.exists():
+            raise click.ClickException(f"dbt project dir does not exist: {dbt_project_path}")
+
+        target = orchestration_path(dbt_project_dir=dbt_project_path, path_=path_)
+        data = load_orch(target)
+        orch_set_hourly_config(data=data, include_current_hour_partition=include_current_hour_partition)
         save_orchestration_with_validation(
             target=target,
             data=data,

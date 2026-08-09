@@ -37,3 +37,41 @@ def daily_at(
         "dedupe_across_ticks": dedupe_across_ticks,
         "timezone": timezone,
     }
+
+
+def hourly_at(
+    *,
+    name: str,
+    job_name: str,
+    minute: int = 0,
+    lookback_hours: int = 0,
+    offset_hours: int = 1,
+    enabled: bool = True,
+    dedupe_across_ticks: bool = True,
+    timezone: str = "UTC",
+):
+    if not name:
+        raise ValueError("Schedule name must be non-empty")
+    if not job_name:
+        raise ValueError("job_name must be non-empty")
+    if minute < 0 or minute > 59:
+        raise ValueError("minute must be 0..59")
+    if lookback_hours < 0:
+        raise ValueError("lookback_hours must be >= 0")
+    if offset_hours < 0:
+        raise ValueError("offset_hours must be >= 0")
+
+    cron = f"{minute} * * * *"
+    return {
+        "name": name,
+        "cron_schedule": cron,
+        "job_name": job_name,
+        "partition_type": "hourly",
+        "partition_offset_days": 0,
+        "partition_lookback_days": 0,
+        "partition_offset_hours": offset_hours,
+        "partition_lookback_hours": lookback_hours,
+        "enabled": enabled,
+        "dedupe_across_ticks": dedupe_across_ticks,
+        "timezone": timezone,
+    }

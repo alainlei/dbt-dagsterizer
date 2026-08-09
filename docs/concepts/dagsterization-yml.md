@@ -19,7 +19,7 @@ dbt_project/
 
 The file bridges dbt metadata (from `manifest.json`) with Dagster orchestration by declaring:
 
-- **Partitioning strategy** for each model (daily, or unpartitioned)
+- **Partitioning strategy** for each model (daily, hourly, or unpartitioned)
 - **Job definitions** (per-model asset jobs or grouped jobs)
 - **Schedules** (when jobs should run)
 - **Partition change sensors** (detectors and propagators for handling late arrivals)
@@ -34,7 +34,10 @@ timezone: UTC                       # Global schedule execution timezone
 partitions:
   daily: []
   daily_config:
-    include_current_day_partition: false
+    include_current_day_partition: true
+  hourly: []
+  hourly_config:
+    include_current_hour_partition: true
 jobs:                               # Grouped job definitions
   job_name:
     models: []
@@ -101,8 +104,9 @@ The `partitions` section assigns partitioning strategies to dbt models. Each mod
 | Type | Description | Env Var Required | Asset Group Isolation |
 |------|-------------|------------------|----------------------|
 | `daily` | One partition per day | `DAGSTER_DAILY_PARTITIONS_START_DATE` (YYYY-MM-DD) | ✅ Separate group |
+| `hourly` | One partition per hour | `DAGSTER_HOURLY_PARTITIONS_START_DATE` (YYYY-MM-DD) | ✅ Separate group |
 
-Daily partition parameters can be configured in `partitions.daily_config` (see [Daily Partition Configuration](#daily-partition-configuration)). No environment variable override is supported.
+Daily partition parameters can be configured in `partitions.daily_config` (see [Daily Partition Configuration](#daily-partition-configuration)). Hourly partition parameters can be configured in `partitions.hourly_config` (see [Hourly Partition Configuration](#hourly-partition-configuration)). No environment variable override is supported.
 
 ### Daily Partitions
 
@@ -133,15 +137,54 @@ partitions:
 ```
 
 **Fields**:
-- `include_current_day_partition` (bool, default: `false`): Whether today's partition should be available in the `DailyPartitionsDefinition`.
-  - `false` (default): Only partitions ending *before* the current time are available (equivalent to `end_offset: 0`).
-  - `true`: Today's partition is also available (equivalent to `end_offset: 1`, useful for same-day processing).
+- `include_current_day_partition` (bool, default: `true`): Whether today's partition should be available in the `DailyPartitionsDefinition`.
+  - `true` (default): Today's partition is also available (equivalent to `end_offset: 1`, useful for same-day processing).
+  - `false`: Only partitions ending *before* the current time are available (equivalent to `end_offset: 0`).
 
 > **Note**: This is different from schedule `offset_days`, which controls *which partition* a schedule targets. `include_current_day_partition` controls the *set of available partitions* in the partition definition itself.
 
 **CLI equivalent**:
 ```bash
 dbt-dagsterizer meta partition-config --include-current-day-partition
+```
+
+### Hourly Partitions
+
+```yaml
+partitions:
+  hourly:
+    - real_time_events
+    - streaming_metrics
+```
+
+**CLI equivalent**:
+```bash
+dbt-dagsterizer meta partition --models real_time_events,streaming_metrics --type hourly
+```
+
+### Hourly Partition Configuration
+
+Configure parameters for the `HourlyPartitionsDefinition` used by all hourly-partitioned models:
+
+```yaml
+partitions:
+  hourly:
+    - real_time_events
+    - streaming_metrics
+  hourly_config:
+    include_current_hour_partition: true
+```
+
+**Fields**:
+- `include_current_hour_partition` (bool, default: `true`): Whether the current hour's partition should be available in the `HourlyPartitionsDefinition`.
+  - `true` (default): The current hour's partition is also available (equivalent to `end_offset: 1`, useful for same-hour processing).
+  - `false`: Only partitions ending *before* the current time are available (equivalent to `end_offset: 0`).
+
+> **Note**: This is different from schedule `offset_hours`, which controls *which partition* a schedule targets. `include_current_hour_partition` controls the *set of available partitions* in the partition definition itself.
+
+**CLI equivalent**:
+```bash
+dbt-dagsterizer meta hourly-config --include-current-hour-partition
 ```
 
 
@@ -196,7 +239,7 @@ jobs:
 **Fields**:
 - `models`: List of dbt models in this job (required)
 - `include_upstream`: Whether to include upstream dependencies (default: `false`)
-- `partitions`: Partition strategy for the job (`daily`, `unpartitioned`)
+- `partitions`: Partition strategy for the job (`daily`, `hourly`, `unpartitioned`)
 
 **CLI equivalent**:
 ```bash
@@ -239,7 +282,7 @@ schedules:
 ```
 
 **Fields**:
-- `type`: Schedule type (only `daily_at` is currently supported)
+- `type`: Schedule type (`daily_at` or `hourly_at`)
 - `job_name`: Target job name (required)
 - `hour`: Hour of day (0-23)
 - `minute`: Minute of hour (0-59)
@@ -258,6 +301,49 @@ dbt-dagsterizer meta schedule \
   --offset-days 1 \
   --enabled
 ```
+
+### Hourly Schedule
+
+```yaml
+schedules:
+  events_hourly_schedule:
+    type: hourly_at
+    job_name: dbt_real_time_events_asset_job
+    minute: 5
+    lookback_hours: 0
+    offset_hours: 1
+    enabled: true
+```
+
+**Fields**:
+- `type`: Schedule type (`hourly_at`)
+- `job_name`: Target job name (required)
+- `minute`: Minute of hour (0-59, default: 0)
+- `lookback_hours`: How many past hourly partitions to process (default: 0)
+- `offset_hours`: Partition offset in hours (default: 1 = previous hour)
+- `enabled`: Whether schedule is active (default: `true`)
+
+**CLI equivalent**:
+```bash
+dbt-dagsterizer meta schedule \
+  --models real_time_events \
+  --name events_hourly_schedule \
+  --schedule-type hourly_at \
+  --minute 5 \
+  --lookback-hours 0 \
+  --offset-hours 1 \
+  --enabled
+```
+
+### Schedule Offset Hours
+
+- `offset_hours: 1` (default): Run for the **previous hour's** partition
+  - Schedule runs at minute 5 of Hour H → processes partition H-1
+  - **Recommended** for most hourly jobs
+
+- `offset_hours: 0`: Run for the **current hour's** partition
+  - Schedule runs at minute 5 of Hour H → processes partition H
+  - Use when you need same-hour processing
 
 ### Schedule Offset Days
 
@@ -602,6 +688,10 @@ partitions:
     - fact_customer_orders_daily
   daily_config:
     include_current_day_partition: true
+  hourly:
+    - real_time_events
+  hourly_config:
+    include_current_hour_partition: true
 
 # Per-model asset jobs (dwd layer)
 asset_jobs:
@@ -636,6 +726,14 @@ schedules:
     minute: 30
     lookback_days: 0
     offset_days: 1
+    enabled: true
+
+  events_hourly_schedule:
+    type: hourly_at
+    job_name: dbt_real_time_events_asset_job
+    minute: 5
+    lookback_hours: 0
+    offset_hours: 1
     enabled: true
 
 # Partition change sensors
@@ -693,9 +791,13 @@ dbt-dagsterizer meta init
 
 # Set partitions
 dbt-dagsterizer meta partition --models orders --type daily
+dbt-dagsterizer meta partition --models real_time_events --type hourly
 
 # Configure daily partition parameters
 dbt-dagsterizer meta partition-config --include-current-day-partition
+
+# Configure hourly partition parameters
+dbt-dagsterizer meta hourly-config --include-current-hour-partition
 
 # Set global schedule timezone
 dbt-dagsterizer meta timezone --timezone "Asia/Macau"
@@ -706,8 +808,12 @@ dbt-dagsterizer meta asset-job --models orders
 # Create grouped job
 dbt-dagsterizer meta job --models fact_orders,fact_customers --name daily_facts --partitions daily
 
-# Create schedule
+# Create daily schedule
 dbt-dagsterizer meta schedule --models orders --hour 2 --minute 0
+
+# Create hourly schedule
+dbt-dagsterizer meta schedule --models real_time_events --name events_hourly \
+  --schedule-type hourly_at --minute 5
 
 # Create partition change detector
 dbt-dagsterizer meta partition-change detector \
@@ -776,7 +882,7 @@ Commit `dagsterization.yml` to your dbt project repository. Changes should be re
 - Verify `enabled: true`
 - Check job name matches exactly
 - Ensure partition type matches job partition config
-- Verify environment variables are set (e.g., `DAGSTER_DAILY_PARTITIONS_START_DATE`)
+- Verify environment variables are set (e.g., `DAGSTER_DAILY_PARTITIONS_START_DATE` or `DAGSTER_HOURLY_PARTITIONS_START_DATE`)
 
 ### Partition change sensor not triggering
 

@@ -61,16 +61,16 @@ def validate_orchestration(
     for model, p_type in sorted(idx.partitions_by_model.items()):
         if model not in existing_models:
             issues.append(ValidationIssue("error", f"partitions references missing model '{model}'"))
-        # Allow daily or unpartitioned
-        if p_type not in {"daily", "unpartitioned"}:
-            issues.append(ValidationIssue("error", f"partitions for model '{model}' must be daily|unpartitioned"))
-        if model in existing_models and p_type == "daily" and "materialize_at_startup" in tags_by_model.get(
+        # Allow daily, hourly, or unpartitioned
+        if p_type not in {"daily", "hourly", "unpartitioned"}:
+            issues.append(ValidationIssue("error", f"partitions for model '{model}' must be daily|hourly|unpartitioned"))
+        if model in existing_models and p_type in {"daily", "hourly"} and "materialize_at_startup" in tags_by_model.get(
             model, set()
         ):
             issues.append(
                 ValidationIssue(
                     "warn",
-                    f"model '{model}' is daily-partitioned and tagged materialize_at_startup; AutomationCondition.missing() may trigger multiple missing partitions",
+                    f"model '{model}' is {p_type}-partitioned and tagged materialize_at_startup; AutomationCondition.missing() may trigger multiple missing partitions",
                 )
             )
 
@@ -85,6 +85,16 @@ def validate_orchestration(
                 include_current_day_partition = daily_config.get("include_current_day_partition")
                 if include_current_day_partition is not None and not isinstance(include_current_day_partition, bool):
                     issues.append(ValidationIssue("error", "partitions.daily_config.include_current_day_partition must be a boolean"))
+
+        # Validate hourly_config.include_current_hour_partition
+        hourly_config = partitions_data.get("hourly_config")
+        if hourly_config is not None:
+            if not isinstance(hourly_config, dict):
+                issues.append(ValidationIssue("error", "partitions.hourly_config must be a mapping"))
+            else:
+                include_current_hour_partition = hourly_config.get("include_current_hour_partition")
+                if include_current_hour_partition is not None and not isinstance(include_current_hour_partition, bool):
+                    issues.append(ValidationIssue("error", "partitions.hourly_config.include_current_hour_partition must be a boolean"))
 
     jobs = orchestration.get("jobs")
     if jobs is not None and not isinstance(jobs, dict):
@@ -110,8 +120,8 @@ def validate_orchestration(
                 if m.strip() not in existing_models:
                     issues.append(ValidationIssue("error", f"jobs.{job_name} references missing model '{m.strip()}'"))
             partitions = job_cfg.get("partitions")
-            if partitions is not None and partitions not in {"daily", "unpartitioned"}:
-                issues.append(ValidationIssue("error", f"jobs.{job_name}.partitions must be daily|unpartitioned when set"))
+            if partitions is not None and partitions not in {"daily", "hourly", "unpartitioned"}:
+                issues.append(ValidationIssue("error", f"jobs.{job_name}.partitions must be daily|hourly|unpartitioned when set"))
             include_upstream = job_cfg.get("include_upstream")
             if include_upstream is not None and not isinstance(include_upstream, bool):
                 issues.append(ValidationIssue("error", f"jobs.{job_name}.include_upstream must be boolean when set"))
@@ -131,8 +141,8 @@ def validate_orchestration(
             if not isinstance(schedule_cfg, dict):
                 issues.append(ValidationIssue("error", f"schedules.{name} must be a mapping"))
                 continue
-            if schedule_cfg.get("type") != "daily_at":
-                issues.append(ValidationIssue("error", f"schedules.{name}.type must be 'daily_at'"))
+            if schedule_cfg.get("type") not in {"daily_at", "hourly_at"}:
+                issues.append(ValidationIssue("error", f"schedules.{name}.type must be 'daily_at' or 'hourly_at'"))
             job_name = schedule_cfg.get("job_name")
             if not isinstance(job_name, str) or not job_name.strip():
                 issues.append(ValidationIssue("error", f"schedules.{name}.job_name must be non-empty"))
@@ -341,8 +351,8 @@ def validate_orchestration_structure(*, orchestration: dict[str, Any]) -> list[V
     if partitions is not None and not isinstance(partitions, dict):
         issues.append(ValidationIssue("error", "partitions must be a mapping"))
     if isinstance(partitions, dict):
-        # Validate daily/unpartitioned partitions
-        for p_type in {"daily", "unpartitioned"}:
+        # Validate daily/hourly/unpartitioned partitions
+        for p_type in {"daily", "hourly", "unpartitioned"}:
             models = partitions.get(p_type)
             if isinstance(models, list):
                 for m in models:
@@ -359,6 +369,16 @@ def validate_orchestration_structure(*, orchestration: dict[str, Any]) -> list[V
                 if include_current_day_partition is not None and not isinstance(include_current_day_partition, bool):
                     issues.append(ValidationIssue("error", "partitions.daily_config.include_current_day_partition must be a boolean"))
 
+        # Validate hourly_config
+        hourly_config = partitions.get("hourly_config")
+        if hourly_config is not None:
+            if not isinstance(hourly_config, dict):
+                issues.append(ValidationIssue("error", "partitions.hourly_config must be a mapping"))
+            else:
+                include_current_hour_partition = hourly_config.get("include_current_hour_partition")
+                if include_current_hour_partition is not None and not isinstance(include_current_hour_partition, bool):
+                    issues.append(ValidationIssue("error", "partitions.hourly_config.include_current_hour_partition must be a boolean"))
+
     jobs = orchestration.get("jobs")
     if jobs is not None and not isinstance(jobs, dict):
         issues.append(ValidationIssue("error", "jobs must be a mapping"))
@@ -374,8 +394,8 @@ def validate_orchestration_structure(*, orchestration: dict[str, Any]) -> list[V
             if not isinstance(models, list) or not models:
                 issues.append(ValidationIssue("error", f"jobs.{job_name}.models must be a non-empty list"))
             partitions_value = cfg.get("partitions")
-            if partitions_value is not None and partitions_value not in {"daily", "unpartitioned"}:
-                issues.append(ValidationIssue("error", f"jobs.{job_name}.partitions must be daily|unpartitioned when set"))
+            if partitions_value is not None and partitions_value not in {"daily", "hourly", "unpartitioned"}:
+                issues.append(ValidationIssue("error", f"jobs.{job_name}.partitions must be daily|hourly|unpartitioned when set"))
 
     schedules = orchestration.get("schedules")
     if schedules is not None and not isinstance(schedules, dict):
@@ -388,8 +408,8 @@ def validate_orchestration_structure(*, orchestration: dict[str, Any]) -> list[V
             if not isinstance(cfg, dict):
                 issues.append(ValidationIssue("error", f"schedules.{name} must be a mapping"))
                 continue
-            if cfg.get("type") != "daily_at":
-                issues.append(ValidationIssue("error", f"schedules.{name}.type must be 'daily_at'"))
+            if cfg.get("type") not in {"daily_at", "hourly_at"}:
+                issues.append(ValidationIssue("error", f"schedules.{name}.type must be 'daily_at' or 'hourly_at'"))
             job_name = cfg.get("job_name")
             if not isinstance(job_name, str) or not job_name.strip():
                 issues.append(ValidationIssue("error", f"schedules.{name}.job_name must be non-empty"))
