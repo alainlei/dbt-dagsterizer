@@ -6,6 +6,8 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-09
+
 ### Breaking
 
 - BREAKING: Default value for `partitions.daily_config.include_current_day_partition` changed from `false` to `true`. When omitted, `DailyPartitionsDefinition` now exposes today's partition as available (`end_offset=1`) instead of excluding it (`end_offset=0`).

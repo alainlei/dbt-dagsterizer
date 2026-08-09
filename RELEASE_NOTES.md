@@ -7,6 +7,44 @@ These notes are intended to be a polished companion to `CHANGELOG.md`:
 - `CHANGELOG.md` remains the cumulative project history.
 - This document provides concise, version-by-version release summaries that are easy to reuse for GitHub Releases and upgrade communication.
 
+## v0.5.0
+
+Release date: 2026-08-09
+
+### Summary
+
+`v0.5.0` adds hourly partition support across dbt assets, schedules, and jobs; corrects timezone propagation from `dagsterization.yml` into asset and schedule definitions; and flips the default for `include_current_day_partition` to expose today's partition when omitted. The CLI, validation, and preset infrastructure are extended for hourly parity with daily; several hardening fixes around replication schedule parity, orchestration config load count, and schedule offset defaults are included.
+
+### Added
+
+- Added hourly partition support alongside the existing daily partition strategy:
+  - New `hourly` partition type in `dagsterization.yml` under `partitions.hourly`, configured via `DAGSTER_HOURLY_PARTITIONS_START_DATE` (`YYYY-MM-DD-HH:MM`, optionally with timezone offset such as `+08:00`).
+  - New `partitions.hourly_config` section with `include_current_hour_partition` (boolean, default `true`) to control current-hour availability in the `HourlyPartitionsDefinition`.
+  - New `hourly_at` schedule type with `offset_hours`/`lookback_hours` parameters analogous to the existing `offset_days`/`lookback_days` for daily schedules.
+  - New `hourly_at()` schedule preset in `schedules/dbt/presets.py` for convenient hourly schedule creation.
+  - CLI support via `meta schedule --schedule-type hourly_at` and `meta hourly-config`.
+  - Validation for `hourly_config` structure, `hourly` partition assignments, and schedule cross-granularity field misuse.
+- Added comprehensive test coverage for hourly partition support: env var enforcement, caching, timezone handling, preset defaults, and factory evaluation (90+ new cases).
+
+### Fixed
+
+- Fixed timezone propagation from `dagsterization.yml` to asset partition definitions and replication schedules so partition boundaries and cron evaluation align with the configured timezone (e.g. `Asia/Macau`) instead of always defaulting to UTC.
+- Fixed replication assets factory to load and index orchestration config once per startup (via shared `_resolve_orch_context()`) instead of three separate passes.
+- Fixed dbt schedule factory daily offset default so `partition_offset_days` defaults to 1 (yesterday) when omitted, matching preset and auto_config behavior.
+- Added schedule-structure validation for hourly schedules in `cli_parts/validation.py`: validates `lookback_hours`/`offset_hours` for `hourly_at` and rejects cross-granularity misuse.
+- Made CLI `meta schedule --hour` conditionally required by schedule type: mandatory for `daily_at`, optional (default 0) for `hourly_at`.
+
+### Breaking Changes
+
+- **`partitions.daily_config.include_current_day_partition` default changed from `false` to `true`.** When this field is omitted, `DailyPartitionsDefinition` now exposes today's partition as available (`end_offset=1`) instead of excluding it (`end_offset=0`). Combined with `materialize_at_startup` tags and `AutomationCondition.missing()`, this can trigger a backfill of today on code location restart.
+  - **Migration:** If you relied on today's partition being excluded, explicitly set `partitions.daily_config.include_current_day_partition: false` in `dagsterization.yml`.
+
+### Upgrade Notes
+
+- Existing daily-partitioned code locations should review whether today's partition should be materialized at startup; if not, add the explicit `include_current_day_partition: false` override before upgrading.
+- `DAGSTER_HOURLY_PARTITIONS_START_DATE` is required when any model uses the `hourly` partition type.
+- Timezone is now threaded through schedule definitions end-to-end. Review hourly/daily cron timing after upgrading to ensure it matches your expectations (previously some paths defaulted schedules to UTC regardless of `timezone` setting).
+
 ## v0.4.0
 
 Release date: 2026-08-03
