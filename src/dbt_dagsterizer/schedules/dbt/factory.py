@@ -131,7 +131,7 @@ def build_dbt_schedules(
                     f"Daily schedule '{spec['name']}' cannot set hourly offset/lookback fields"
                 )
 
-            partition_offset_days = int(spec.get("partition_offset_days", 0))
+            partition_offset_days = int(spec.get("partition_offset_days", 1))
             partition_lookback_days = int(spec.get("partition_lookback_days", 0))
             execution_timezone = normalize_timezone(spec.get("timezone"), default="UTC")
             schedules_by_name[spec["name"]] = _build_daily_partitioned_schedule(

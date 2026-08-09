@@ -62,6 +62,8 @@ from .validation import (
     validate_orchestration_structure,
 )
 
+_HOUR_UNSET = -9999
+
 
 def _default_dbt_target() -> str:
     return os.getenv("DBT_TARGET") or os.getenv("LUBAN_DEFAULT_DBT_TARGET") or "development"
@@ -377,7 +379,7 @@ def build_meta_group() -> click.Group:
     @click.option("--models", default="", help="Comma-separated model names")
     @click.option("--tag", "tag_", default="", help="Select models by existing dbt tag")
     @click.option("--name", required=True)
-    @click.option("--hour", type=int, default=0, show_default=True)
+    @click.option("--hour", type=int, default=_HOUR_UNSET, help="Required for --schedule-type daily_at; optional for hourly_at (default 0). Valid 0..23")
     @click.option("--minute", type=int, required=True)
     @click.option("--lookback-days", type=int, default=0, show_default=True)
     @click.option("--offset-days", type=int, default=1, show_default=True)
@@ -404,6 +406,10 @@ def build_meta_group() -> click.Group:
         prepare: bool,
         parse: bool,
     ) -> None:
+        if schedule_type == "daily_at" and hour == _HOUR_UNSET:
+            raise click.ClickException("--hour is required when --schedule-type is daily_at")
+        if schedule_type == "hourly_at" and hour == _HOUR_UNSET:
+            hour = 0
         if hour < 0 or hour > 23:
             raise click.ClickException("--hour must be 0..23")
         if minute < 0 or minute > 59:

@@ -149,18 +149,57 @@ def validate_orchestration(
             elif job_name.strip() not in derived_job_names:
                 issues.append(ValidationIssue("error", f"schedules.{name}.job_name '{job_name.strip()}' not found"))
 
+            schedule_type = schedule_cfg.get("type")
             hour = schedule_cfg.get("hour")
             minute = schedule_cfg.get("minute")
-            if not isinstance(hour, int) or hour < 0 or hour > 23:
-                issues.append(ValidationIssue("error", f"schedules.{name}.hour must be 0..23"))
             if not isinstance(minute, int) or minute < 0 or minute > 59:
                 issues.append(ValidationIssue("error", f"schedules.{name}.minute must be 0..59"))
-            lookback_days = schedule_cfg.get("lookback_days", 0)
-            if not isinstance(lookback_days, int) or lookback_days < 0:
-                issues.append(ValidationIssue("error", f"schedules.{name}.lookback_days must be >= 0"))
-            offset_days = schedule_cfg.get("offset_days", 1)
-            if not isinstance(offset_days, int) or offset_days < 0:
-                issues.append(ValidationIssue("error", f"schedules.{name}.offset_days must be >= 0"))
+
+            if schedule_type == "daily_at":
+                if not isinstance(hour, int) or hour < 0 or hour > 23:
+                    issues.append(ValidationIssue("error", f"schedules.{name}.hour must be 0..23 (required for daily_at)"))
+                lookback_hours = schedule_cfg.get("lookback_hours")
+                offset_hours = schedule_cfg.get("offset_hours")
+                if lookback_hours not in (None, 0):
+                    issues.append(ValidationIssue(
+                        "error",
+                        f"schedules.{name}: daily_at schedule cannot set lookback_hours (use lookback_days)"
+                    ))
+                if offset_hours not in (None, 0):
+                    issues.append(ValidationIssue(
+                        "error",
+                        f"schedules.{name}: daily_at schedule cannot set offset_hours (use offset_days)"
+                    ))
+                lookback_days = schedule_cfg.get("lookback_days", 0)
+                if not isinstance(lookback_days, int) or lookback_days < 0:
+                    issues.append(ValidationIssue("error", f"schedules.{name}.lookback_days must be >= 0"))
+                offset_days = schedule_cfg.get("offset_days", 1)
+                if not isinstance(offset_days, int) or offset_days < 0:
+                    issues.append(ValidationIssue("error", f"schedules.{name}.offset_days must be >= 0"))
+            elif schedule_type == "hourly_at":
+                if hour not in (None, 0):
+                    issues.append(ValidationIssue(
+                        "error",
+                        f"schedules.{name}: hourly_at schedule cannot set hour (run at the same minute every hour)"
+                    ))
+                lookback_days = schedule_cfg.get("lookback_days")
+                offset_days = schedule_cfg.get("offset_days")
+                if lookback_days not in (None, 0):
+                    issues.append(ValidationIssue(
+                        "error",
+                        f"schedules.{name}: hourly_at schedule cannot set lookback_days (use lookback_hours)"
+                    ))
+                if offset_days not in (None, 0):
+                    issues.append(ValidationIssue(
+                        "error",
+                        f"schedules.{name}: hourly_at schedule cannot set offset_days (use offset_hours)"
+                    ))
+                lookback_hours = schedule_cfg.get("lookback_hours", 0)
+                if not isinstance(lookback_hours, int) or lookback_hours < 0:
+                    issues.append(ValidationIssue("error", f"schedules.{name}.lookback_hours must be >= 0"))
+                offset_hours = schedule_cfg.get("offset_hours", 1)
+                if not isinstance(offset_hours, int) or offset_hours < 0:
+                    issues.append(ValidationIssue("error", f"schedules.{name}.offset_hours must be >= 0"))
 
     pc = orchestration.get("partition_change")
     if pc is not None and not isinstance(pc, dict):

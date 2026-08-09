@@ -38,6 +38,9 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
   - Threaded `execution_timezone` through replication schedule definitions so cron and partition boundaries align with the configured timezone.
 - Added timezone propagation tests verifying daily and hourly partition definitions respect the configured timezone, default to UTC when unspecified, and invalidate the cache on timezone changes.
 - Consolidated orchestration config loading in the replication assets factory so the config is loaded and indexed once per startup instead of three separate times.
+- Fixed dbt schedule factory daily offset default so `partition_offset_days` defaults to 1 (yesterday) when omitted, matching preset/auto_config behavior instead of incorrectly defaulting to 0.
+- Added schedule-structure validation for hourly partition schedules: struct validation in `cli_parts/validation.py` now validates `lookback_hours`/`offset_hours` for `hourly_at` schedules and rejects cross-granularity field misuse (e.g. `hourly_at` setting `offset_days` or `daily_at` setting `lookback_hours`).
+- Made CLI `meta schedule --hour` conditionally required by schedule type: mandatory for `daily_at`, optional (default 0) for `hourly_at`, instead of silently defaulting to 0 for all schedule types.
 
 ### Changed
 
