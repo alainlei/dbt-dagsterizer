@@ -104,7 +104,7 @@ The `partitions` section assigns partitioning strategies to dbt models. Each mod
 | Type | Description | Env Var Required | Asset Group Isolation |
 |------|-------------|------------------|----------------------|
 | `daily` | One partition per day | `DAGSTER_DAILY_PARTITIONS_START_DATE` (YYYY-MM-DD) | ✅ Separate group |
-| `hourly` | One partition per hour | `DAGSTER_HOURLY_PARTITIONS_START_DATE` (YYYY-MM-DD) | ✅ Separate group |
+| `hourly` | One partition per hour | `DAGSTER_HOURLY_PARTITIONS_START_DATE` (YYYY-MM-DD-HH:MM, optionally with timezone offset e.g. `+08:00`) | ✅ Separate group |
 
 Daily partition parameters can be configured in `partitions.daily_config` (see [Daily Partition Configuration](#daily-partition-configuration)). Hourly partition parameters can be configured in `partitions.hourly_config` (see [Hourly Partition Configuration](#hourly-partition-configuration)). No environment variable override is supported.
 

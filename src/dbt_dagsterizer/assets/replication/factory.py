@@ -32,8 +32,11 @@ from ...resources.starrocks import make_starrocks_resource
 from .executor import execute_replication
 
 
-def _resolve_include_current_day() -> bool:
-    """Load orchestration config and return ``include_current_day_partition``."""
+def _resolve_orch_context() -> tuple[bool, bool, str]:
+    """Load orchestration config once and return partition + timezone context.
+
+    Returns a tuple ``(include_current_day_partition, include_current_hour_partition, timezone)``.
+    """
     dbt_project_dir = get_dbt_project_dir()
     cfg_path = resolve_orchestration_path(
         dbt_project_dir=dbt_project_dir,
@@ -41,31 +44,11 @@ def _resolve_include_current_day() -> bool:
     )
     cfg = load_orch(cfg_path)
     idx = index_orch(cfg)
-    return idx.daily_include_current_day_partition
-
-
-def _resolve_include_current_hour() -> bool:
-    """Load orchestration config and return ``include_current_hour_partition``."""
-    dbt_project_dir = get_dbt_project_dir()
-    cfg_path = resolve_orchestration_path(
-        dbt_project_dir=dbt_project_dir,
-        path_=Path(default_orchestration_path(dbt_project_dir=dbt_project_dir).name),
+    return (
+        idx.daily_include_current_day_partition,
+        idx.hourly_include_current_hour_partition,
+        idx.timezone,
     )
-    cfg = load_orch(cfg_path)
-    idx = index_orch(cfg)
-    return idx.hourly_include_current_hour_partition
-
-
-def _resolve_timezone() -> str:
-    """Load orchestration config and return the configured timezone."""
-    dbt_project_dir = get_dbt_project_dir()
-    cfg_path = resolve_orchestration_path(
-        dbt_project_dir=dbt_project_dir,
-        path_=Path(default_orchestration_path(dbt_project_dir=dbt_project_dir).name),
-    )
-    cfg = load_orch(cfg_path)
-    idx = index_orch(cfg)
-    return idx.timezone
 
 
 def build_replication_assets(specs: list[dict]) -> list[dg.AssetsDefinition]:
@@ -73,15 +56,13 @@ def build_replication_assets(specs: list[dict]) -> list[dg.AssetsDefinition]:
 
     Each asset:
     - Depends on the dbt model asset via ``deps=[AssetKey(source_relation)]``
-    - Uses the same ``partitions_def`` as the dbt model (daily / None)
+    - Uses the same ``partitions_def`` as the dbt model (daily / hourly / None)
     - Executes ``execute_replication`` when materialized
     """
     if not specs:
         return []
 
-    include_current_day = _resolve_include_current_day()
-    include_current_hour = _resolve_include_current_hour()
-    timezone = _resolve_timezone()
+    include_current_day, include_current_hour, timezone = _resolve_orch_context()
 
     assets: list[dg.AssetsDefinition] = []
     for spec in specs:

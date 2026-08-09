@@ -6,13 +6,19 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 ## [Unreleased]
 
+### Breaking
+
+- BREAKING: Default value for `partitions.daily_config.include_current_day_partition` changed from `false` to `true`. When omitted, `DailyPartitionsDefinition` now exposes today's partition as available (`end_offset=1`) instead of excluding it (`end_offset=0`).
+  - Impact: code locations that omit `partitions.daily_config.include_current_day_partition` will now include today's partition in the available partition set. Combined with `materialize_at_startup` tags and `AutomationCondition.missing()`, this can trigger a backfill of today on code location restart.
+  - Migration: if you relied on today's partition being excluded, explicitly set `partitions.daily_config.include_current_day_partition: false` in `dagsterization.yml`.
+
 ### Added
 
 - Added hourly partition support for dbt assets, schedules, and sensors alongside the existing daily partition strategy.
-  - New `hourly` partition type in `dagsterization.yml` under `partitions.hourly`, configured with `DAGSTER_HOURLY_PARTITIONS_START_DATE` (YYYY-MM-DD-HH:MM format).
+  - New `hourly` partition type in `dagsterization.yml` under `partitions.hourly`, configured with `DAGSTER_HOURLY_PARTITIONS_START_DATE` (YYYY-MM-DD-HH:MM format, optionally with timezone offset such as `+08:00`).
   - New `partitions.hourly_config` section with `include_current_hour_partition` (boolean, default `true`) to control whether the current hour's partition is available in the `HourlyPartitionsDefinition`.
   - New `hourly_at` schedule type for hourly cadence schedules, with `offset_hours` and `lookback_hours` parameters analogous to the existing `offset_days`/`lookback_days` daily schedule parameters.
-  - New `hourly_at()` schedule preset in `schedules/dbt_config.py` for convenient hourly schedule creation with `offset_hours`, `lookback_hours`, and `minute` parameters.
+  - New `hourly_at()` schedule preset in `schedules/dbt/presets.py` for convenient hourly schedule creation with `offset_hours`, `lookback_hours`, and `minute` parameters.
   - CLI `meta schedule --schedule-type hourly_at` support for creating hourly schedules via the command line.
   - CLI `meta hourly-config` command for managing hourly partition configuration.
   - Validation for `hourly_config` structure and `hourly` partition assignments in `cli_parts/validation.py`.
@@ -29,7 +35,9 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
   - Added `timezone` parameter to `get_daily_partitions_def()`, `get_hourly_partitions_def()`, and `get_partitions_def()` in `partitions.py`.
   - Threaded `timezone` through dbt asset creation (`assets/dbt/assets.py`), dbt job factory (`jobs/dbt/factory.py`, `jobs/dbt/jobs.py`), replication asset factory (`assets/replication/factory.py`), and replication job factory (`jobs/replication/factory.py`).
   - Made the singleton partition definition cache timezone-aware so changing the timezone correctly invalidates the cached definition.
+  - Threaded `execution_timezone` through replication schedule definitions so cron and partition boundaries align with the configured timezone.
 - Added timezone propagation tests verifying daily and hourly partition definitions respect the configured timezone, default to UTC when unspecified, and invalidate the cache on timezone changes.
+- Consolidated orchestration config loading in the replication assets factory so the config is loaded and indexed once per startup instead of three separate times.
 
 ### Changed
 

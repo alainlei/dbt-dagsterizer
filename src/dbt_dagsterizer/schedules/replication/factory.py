@@ -6,6 +6,8 @@ from datetime import datetime, timedelta, timezone
 
 import dagster as dg
 
+from ...orchestration_config import normalize_timezone
+
 logger = logging.getLogger(__name__)
 
 
@@ -14,7 +16,6 @@ def build_replication_schedules(schedule_specs: list[dict]) -> list:
     if not schedule_specs:
         return []
 
-    # Build a map of job names to job definitions
     from ...jobs.replication import get_replication_jobs_by_name
     jobs_by_name = get_replication_jobs_by_name()
 
@@ -25,6 +26,11 @@ def build_replication_schedules(schedule_specs: list[dict]) -> list:
         cron_schedule = spec["cron_schedule"]
         partition_type = spec.get("partition_type", "unpartitioned")
         enabled = spec.get("enabled", True)
+        execution_timezone = normalize_timezone(spec.get("timezone"), default="UTC")
+        offset_hours = int(spec.get("partition_offset_hours", spec.get("offset_hours", 1)))
+        lookback_hours = int(spec.get("partition_lookback_hours", spec.get("lookback_hours", 0)))
+        offset_days = int(spec.get("partition_offset_days", spec.get("offset_days", 1)))
+        lookback_days = int(spec.get("partition_lookback_days", spec.get("lookback_days", 0)))
 
         if job_name not in jobs_by_name:
             raise ValueError(f"Replication schedule '{schedule_name}' references unknown job '{job_name}'")
@@ -33,13 +39,13 @@ def build_replication_schedules(schedule_specs: list[dict]) -> list:
 
         default_status = dg.DefaultScheduleStatus.RUNNING if enabled else dg.DefaultScheduleStatus.STOPPED
 
-        # Build schedule based on partition type
         if partition_type == "unpartitioned":
             @dg.schedule(
                 name=schedule_name,
                 cron_schedule=cron_schedule,
                 job=job,
                 default_status=default_status,
+                execution_timezone=execution_timezone,
             )
             def _unpartitioned_schedule(context):
                 return dg.RunRequest()
@@ -52,11 +58,16 @@ def build_replication_schedules(schedule_specs: list[dict]) -> list:
                 cron_schedule=cron_schedule,
                 job=job,
                 default_status=default_status,
+                execution_timezone=execution_timezone,
             )
             def _daily_schedule(context):
                 scheduled_time = context.scheduled_execution_time or datetime.now(timezone.utc)
-                partition_date = (scheduled_time - timedelta(days=1)).date().isoformat()
-                return dg.RunRequest(partition_key=partition_date)
+                anchor_day = (scheduled_time - timedelta(days=offset_days)).date()
+                run_requests = []
+                for i in range(lookback_days + 1):
+                    partition_day = (anchor_day - timedelta(days=i)).isoformat()
+                    run_requests.append(dg.RunRequest(partition_key=partition_day))
+                return run_requests
 
             schedules.append(_daily_schedule)
 
@@ -66,12 +77,17 @@ def build_replication_schedules(schedule_specs: list[dict]) -> list:
                 cron_schedule=cron_schedule,
                 job=job,
                 default_status=default_status,
+                execution_timezone=execution_timezone,
             )
             def _hourly_schedule(context):
                 scheduled_time = context.scheduled_execution_time or datetime.now(timezone.utc)
-                partition_time = (scheduled_time - timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
-                partition_key = partition_time.strftime("%Y-%m-%d-%H:00")
-                return dg.RunRequest(partition_key=partition_key)
+                anchor_hour = (scheduled_time - timedelta(hours=offset_hours)).replace(minute=0, second=0, microsecond=0)
+                run_requests = []
+                for i in range(lookback_hours + 1):
+                    partition_time = anchor_hour - timedelta(hours=i)
+                    partition_key = partition_time.strftime("%Y-%m-%d-%H:00")
+                    run_requests.append(dg.RunRequest(partition_key=partition_key))
+                return run_requests
 
             schedules.append(_hourly_schedule)
 
