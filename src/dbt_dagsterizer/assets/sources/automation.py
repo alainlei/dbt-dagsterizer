@@ -50,6 +50,7 @@ def load_automation_observable_sources() -> list[dict[str, str | None]]:
             continue
         source_name = props.get("source_name")
         table_name = props.get("identifier") or props.get("name")
+        dbt_name = props.get("name")
         if not source_name or not table_name:
             continue
 
@@ -64,6 +65,7 @@ def load_automation_observable_sources() -> list[dict[str, str | None]]:
             {
                 "source": str(source_name),
                 "table": str(table_name),
+                "name": str(dbt_name) if dbt_name is not None else str(table_name),
                 "watermark_column": str(watermark_column) if watermark_column is not None else None,
                 "watermark_sql": str(watermark_sql) if watermark_sql is not None else None,
                 "group": str(group) if group is not None else None,
