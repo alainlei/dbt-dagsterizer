@@ -127,7 +127,10 @@ def otel_dagster_transaction_info(context: Any) -> tuple[str, str, dict[str, Any
         tx_type = "manual"
         tx_name = job_name or "manual"
 
-    span_name = f"{tx_type}/{tx_name}" if tx_name else tx_type
+    if code_location:
+        span_name = f"{tx_type}/{code_location}/{tx_name}" if tx_name else f"{tx_type}/{code_location}"
+    else:
+        span_name = f"{tx_type}/{tx_name}" if tx_name else tx_type
 
     attrs: dict[str, Any] = {
         "transaction.type": tx_type,
