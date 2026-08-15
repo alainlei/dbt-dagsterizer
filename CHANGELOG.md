@@ -6,6 +6,19 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-08-15
+
+### Fixed
+
+- **OTel bootstrap — disabled `none/none` default now warns (provider-agnostic)**: `configure_otel()` now emits a single `WARNING` per process when both `OTEL_TRACES_EXPORTER` and `OTEL_METRICS_EXPORTER` are `none` (or empty), so operators discover immediately why a code location / run pod produces zero OpenTelemetry output instead of silently succeeding with a noop provider. Diagnostic text points at any OTLP-compatible backend and the required endpoint + protocol setup.
+- **OTel bootstrap — missing endpoint now leads with 'endpoint not set' and keeps the scheme-prefix warning as an important follow-up**: When export is enabled (`otlp`) but `OTEL_EXPORTER_OTLP_ENDPOINT` is empty, the warning now explicitly says this is the *platform-default noop* until an OTLP backend is installed, directs the user to set the endpoint via centralized Luban config or a workspace gitops overlay, and follows with the critical scheme-prefix note (always use explicit `http://` for plaintext or `https://` for TLS to avoid gRPC default-TLS `WRONG_VERSION_NUMBER` handshake failures against plaintext backends).
+- **OTel bootstrap — force_flush no longer lies about transport-level failures (provider-agnostic root causes)**. Wrapped `OTLPSpanExporter` and `OTLPMetricExporter` with a `_ResultRecording*Exporter` shim that emits a `WARNING` for every batch the downstream exporter returns `FAILURE` for, including the span/metric count and the exact endpoint/protocol being hit. A unified 5-item triage list valid for *any* OTLP backend (network path / port, scheme omission → explicit `http://`/`https://`, auth via `OTEL_EXPORTER_OTLP_HEADERS` or mTLS, backend 5xx/429/disk/OOM, per-signal path mismatch) is enumerated in each log. Previously `BatchSpanProcessor.force_flush()`/`PeriodicExportingMetricReader` returned `True` even when every batch errored permanently.
+- **OTel bootstrap — double `configure_otel()` call now detected and warned instead of silently using the first (noop) provider**: Both `trace.set_tracer_provider()` and `metrics.set_meter_provider()` are wrapped in try/except for the RuntimeError `"Overriding of current TracerProvider/MeterProvider is not allowed"`; when triggered we log a single warning that tells the user to invoke `configure_otel()` once, after applying all `OTEL_*` env overrides, and correctly report `traces_configured=False` instead of incorrectly claiming success. This directly fixes the exact bug reproduced in smoke #5 where a second enable-override call silently fell back to the first-call noop provider.
+
+### Changed
+
+- **OTel bootstrap warning messages are now backend-agnostic** (no longer Fleet/Elastic/APM specific). The `none/none` master-switch warning, the empty-endpoint warning, and the `_ResultRecording*Exporter` FAILURE triage lists all use generic OTLP wording so they are equally correct for OpenObserve, Elastic APM, Grafana Tempo/Prometheus, a standalone OTel Collector, or any other OTLP-compatible backend.
+
 ## [0.5.0] - 2026-08-09
 
 ### Breaking
