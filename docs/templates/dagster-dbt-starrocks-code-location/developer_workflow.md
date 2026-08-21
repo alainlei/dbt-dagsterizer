@@ -39,6 +39,35 @@ Keep model execution details in dbt config (materialization strategy, incrementa
    - Or: use `dbt-dagsterizer meta init --parse` to create the orchestration file and refresh the manifest.
 2. Start the code location and verify `Definitions` load.
 
+## Environment & `.env` loading
+
+The generated `definitions.py` loads two `.env` files into the process environment *before* resolving any dbt or Dagster paths. Both files are optional; neither is created by the template scaffold (create them when you need local overrides).
+
+Loaded paths (in priority order, first-writer-wins because the loader uses `os.environ.setdefault`):
+
+1. **Shell / already exported environment variables** — highest priority; values already present are never overwritten.
+2. **`<repo-root>/.env`** — repo-wide defaults shared across the code location (OTLP endpoints, shared DB credentials, dbt profile overrides, luban feature flags).
+3. **`<repo-root>/dbt_project/.env`** — dbt-project-only overrides; values here are superseded by any matching key in the repo-root `.env`.
+4. **Hardcoded defaults baked into `definitions.py`** (`LUBAN_REPO_ROOT`, `DBT_PROJECT_DIR`, `DBT_PROFILES_DIR`) — lowest priority.
+
+Parsing rules match `dbt_dagsterizer.env_utils.parse_dotenv_file`:
+
+- Lines starting with `#` are comments; blank lines are ignored.
+- Lines may start with `export ` prefix.
+- Unquoted, single-quoted, and double-quoted values are supported.
+- Double-quoted values honor escape sequences `\n`, `\r`, `\t`, `\"`, and `\\`.
+
+Common things to put in the repo-root `.env`:
+
+```bash
+OTEL_TRACES_EXPORTER=otlp
+OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector.observability.svc:4318
+LUBAN_OTEL_SPAN_NAME_INCLUDE_CODE_LOCATION=1
+STARROCKS_HOST=sr-fe.luban.local
+STARROCKS_ODS_DB=ods
+```
+
 ## Editing orchestration intent with the CLI
 
 Instead of writing orchestration intent in model SQL, the recommended workflow is:

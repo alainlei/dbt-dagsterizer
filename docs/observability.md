@@ -40,6 +40,36 @@ Endpoint formatting depends on protocol:
 
 When using `http/protobuf`, the exporter sends data to OTLP HTTP paths (`/v1/traces`, `/v1/metrics`). dbt-dagsterizer auto-appends the correct path if you provide a base URL with no path.
 
+## Span naming (transaction.name)
+
+dbt-dagsterizer sets the top-level transaction / span name from Dagster's run context so APM backends can group operations by type.
+
+**Default format (2-segment):**
+
+```
+{transaction.type}/{transaction.name}
+```
+
+Examples: `schedule/daily`, `sensor/detector_orders`, `asset_job/demo`, `job/run_facts`, `manual/backfill_orders`, `backfill/<backfill_id>`.
+
+**3-segment format (opt-in):** When multiple code locations share one OTLP backend and span names collide (for example two code locations each have a `schedule/daily`), set:
+
+```bash
+LUBAN_OTEL_SPAN_NAME_INCLUDE_CODE_LOCATION=1
+```
+
+Truthy values: `1`, `true`, `yes`, `on` (case-insensitive). The span name becomes:
+
+```
+{transaction.type}/{dagster.code_location}/{transaction.name}
+```
+
+Examples: `schedule/orders_analytics/daily`, `job/orders_analytics/run_facts`, `detector/orders_analytics/detector_orders`.
+
+When the run is `__ASSET_JOB__` and `dagster.code_location` already equals the transaction name (which it does for default untitled asset jobs), the duplicate segment is skipped so you keep `asset_job/demo` instead of `asset_job/demo/demo`.
+
+Regardless of span-name format, `dagster.code_location` is always set as a span attribute (`dagster.code_location`) so filters/dashboards keyed on attributes continue to work without enabling the 3-segment display name.
+
 ## Elastic APM smoke test (local k8s)
 
 This section is a step-by-step smoke test for verifying that dbt-dagsterizer emits OTEL traces to Elastic APM (and that Kibana can display them).

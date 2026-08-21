@@ -6,6 +6,23 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-08-21
+
+### Added
+
+- **OTel span naming — optional code_location disambiguation (opt-in):** Added `LUBAN_OTEL_SPAN_NAME_INCLUDE_CODE_LOCATION` env var to `otel_dagster_transaction_info()`. When set to a truthy value (`1`, `true`, `yes`, `on`), the emitted span display name switches from the 2-segment default `{tx_type}/{tx_name}` to a 3-segment form `{tx_type}/{code_location}/{tx_name}`. This lets shared APM backends distinguish identically-named schedules/jobs (`schedule/daily`) across multiple deployed code locations (`schedule/orders_analytics/daily` vs `schedule/crm_analytics/daily`). The `__ASSET_JOB__` path intentionally skips the `code_location` segment when it already equals `tx_name` so default untitled asset jobs stay `asset_job/demo` instead of producing the redundant `asset_job/demo/demo`.
+- **Template `definitions.py` now auto-loads `.env` on startup.** The rendered code-location template loads dotenv files from both `<repo-root>/.env` and `<repo-root>/dbt_project/.env` (using `dbt_dagsterizer.env_utils.parse_dotenv_file` with quoted-string and escape-sequence support) via `os.environ.setdefault` *before* applying hardcoded defaults for `LUBAN_REPO_ROOT`, `DBT_PROJECT_DIR`, and `DBT_PROFILES_DIR`. Effective precedence: shell env → repo-root `.env` → `dbt_project/.env` → baked-in defaults. Local `dagster dev` workflows now pick up a developer's workspace `.env` without extra ceremony.
+
+### Fixed
+
+- **Observable source assets now correctly handle dbt sources whose `identifier` differs from `name`** (for example an MSSQL upstream with a case-sensitive table name `OrdersFact` or a cross-catalog dotted path `CatalogName.Schema.Orders` while the dbt logical name stays simple). Previously the observable source asset key was built from the physical identifier, while `dagster_dbt` indexes source output names by the logical `name` field, producing a `KeyError` on `resolve_source_asset_key` for any source where the two diverged. `automation.py` now stores both `spec["table"]` (physical identifier, used for SQL FROM / watermark queries) and `spec["name"]` (logical dbt name, used for asset-key lookup), and `factory.py` resolves the source asset key using the logical name while keeping the physical identifier in the emitted SQL query.
+- **`__ASSET_JOB__` span-name duplicate-segment guard** so the new 3-segment code-location span form never produces `asset_job/demo/demo` for default untitled asset jobs where `tx_name` is already the code location name.
+
+### Changed
+
+- **Template documentation for dotenv loading precedence and OTel span-name env var added:** developer_workflow.md now documents the `.env` two-file load order and parser rules, template_usage.md documents the dbt source `identifier` vs `name` disambiguation behavior, and observability.md documents the `LUBAN_OTEL_SPAN_NAME_INCLUDE_CODE_LOCATION` env var and the two span-name formats.
+- **`build_definitions()` no longer needs template-local dotenv shimming** because the generated `definitions.py` performs the same `env_utils`-backed dotenv load that the CLI already uses.
+
 ## [0.5.1] - 2026-08-15
 
 ### Fixed

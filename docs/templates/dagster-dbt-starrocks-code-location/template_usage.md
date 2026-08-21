@@ -51,6 +51,7 @@ Notes:
 - `watermark_sql` must return a single scalar value because the result is passed through `query_scalar(...)` and stored as the source asset's `DataVersion`.
 - If both `watermark_column` and `watermark_sql` are configured, `watermark_sql` takes precedence.
 - `watermark_column` uses the resolved source database name automatically. `watermark_sql` is executed as-is, so include any required database/schema qualification in the SQL itself.
+- dbt sources may declare `identifier` separately from `name` (for example, when the upstream table uses a case-sensitive physical name like `OrdersFact` or a cross-catalog dotted path `CatalogName.Schema.Orders` while your logical dbt name stays simple). dbt-dagsterizer uses `name` for Dagster source asset key resolution (matching `dagster_dbt`'s output-name indexing), while still using `identifier` (or falling back to `name`) for the SQL `FROM` clause in watermark queries. This lets you keep readable logical names while preserving the exact physical table path.
 
 When that value changes, Dagster records a new observation event for the source asset.
 
