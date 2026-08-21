@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from contextlib import contextmanager
 from typing import Any
 
@@ -127,7 +128,18 @@ def otel_dagster_transaction_info(context: Any) -> tuple[str, str, dict[str, Any
         tx_type = "manual"
         tx_name = job_name or "manual"
 
-    span_name = f"{tx_type}/{tx_name}" if tx_name else tx_type
+    include_code_location = (
+        (os.getenv("LUBAN_OTEL_SPAN_NAME_INCLUDE_CODE_LOCATION") or "").strip().lower()
+        in {"1", "true", "yes", "on"}
+    )
+
+    if include_code_location and code_location:
+        if job_name == "__ASSET_JOB" and code_location == tx_name:
+            span_name = f"{tx_type}/{tx_name}" if tx_name else tx_type
+        else:
+            span_name = f"{tx_type}/{code_location}/{tx_name}" if tx_name else f"{tx_type}/{code_location}"
+    else:
+        span_name = f"{tx_type}/{tx_name}" if tx_name else tx_type
 
     attrs: dict[str, Any] = {
         "transaction.type": tx_type,
