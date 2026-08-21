@@ -1,3 +1,5 @@
+import os
+
 import pytest
 
 from dbt_dagsterizer.otel import (
@@ -144,3 +146,57 @@ def test_dagster_transaction_handles_non_partitioned_run_context():
     assert span_name == "job/my_job"
     assert tx_type == "job"
     assert attrs["dagster.partition_key"] == ""
+
+
+def test_dagster_transaction_includes_code_location_when_opted_in(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("LUBAN_OTEL_SPAN_NAME_INCLUDE_CODE_LOCATION", "1")
+
+    schedule_ctx = _Ctx(
+        run_id="r6",
+        job_name="my_job",
+        tags={"dagster/schedule_name": "my_schedule", "dagster/code_location": "demo"},
+    )
+    span_name, _, _ = otel_dagster_transaction_info(schedule_ctx)
+    assert span_name == "schedule/demo/my_schedule"
+
+    job_ctx = _CtxWithExplodingPartitionKey(
+        run_id="r7",
+        job_name="my_job",
+        tags={"dagster/code_location": "demo"},
+    )
+    span_name, _, _ = otel_dagster_transaction_info(job_ctx)
+    assert span_name == "job/demo/my_job"
+
+
+def test_dagster_transaction_asset_job_skips_duplicate_code_location_when_opted_in(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Even with code-location inclusion on, the __ASSET_JOB__ branch already
+    carries the code_location value inside tx_name; we must NOT double-print
+    it in the span name."""
+    monkeypatch.setenv("LUBAN_OTEL_SPAN_NAME_INCLUDE_CODE_LOCATION", "true")
+
+    ctx = _Ctx(
+        run_id="r8",
+        job_name="__ASSET_JOB",
+        tags={"dagster/code_location": "demo"},
+    )
+    span_name, _, attrs = otel_dagster_transaction_info(ctx)
+    assert span_name == "asset_job/demo"
+    assert attrs["dagster.code_location"] == "demo"
+
+
+def test_dagster_transaction_skips_code_location_when_env_not_truthy(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    for value in ("", "0", "false", "off", "no"):
+        monkeypatch.setenv("LUBAN_OTEL_SPAN_NAME_INCLUDE_CODE_LOCATION", value)
+        ctx = _Ctx(
+            run_id="r9",
+            job_name="my_job",
+            tags={"dagster/code_location": "demo"},
+        )
+        span_name, _, _ = otel_dagster_transaction_info(ctx)
+        assert span_name == "job/my_job", f"unexpected span_name for env value {value!r}"
