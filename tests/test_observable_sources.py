@@ -51,6 +51,7 @@ def test_load_automation_observable_sources_supports_optional_watermark_sql(
         {
             "source": "demo",
             "table": "customers",
+            "name": "customers",
             "watermark_column": None,
             "watermark_sql": "select max(updated_at) from demo.customers",
             "group": None,
@@ -58,6 +59,7 @@ def test_load_automation_observable_sources_supports_optional_watermark_sql(
         {
             "source": "demo",
             "table": "orders",
+            "name": "orders",
             "watermark_column": "updated_at",
             "watermark_sql": None,
             "group": None,
@@ -135,6 +137,7 @@ def test_load_automation_observable_sources_reads_custom_group(
         {
             "source": "demo",
             "table": "customers",
+            "name": "customers",
             "watermark_column": None,
             "watermark_sql": "select max(updated_at) from demo.customers",
             "group": "demo_sources",
@@ -142,6 +145,7 @@ def test_load_automation_observable_sources_reads_custom_group(
         {
             "source": "demo",
             "table": "orders",
+            "name": "orders",
             "watermark_column": "updated_at",
             "watermark_sql": None,
             "group": "demo_orders",
@@ -149,6 +153,7 @@ def test_load_automation_observable_sources_reads_custom_group(
         {
             "source": "demo",
             "table": "products",
+            "name": "products",
             "watermark_column": "updated_at",
             "watermark_sql": None,
             "group": "demo_products",
@@ -323,3 +328,101 @@ def test_build_observable_source_assets_quotes_each_part_of_dotted_identifiers(m
 
     assert isinstance(result, dg.DataVersion)
     assert queries == ["select max(`updated`.`at`) from `catalog`.`db`.`external`.`orders`"]
+
+
+def test_load_automation_observable_sources_identifier_differs_from_name(
+    monkeypatch,
+    tmp_path: Path,
+):
+    """When a dbt source uses `identifier` that differs from `name`, both
+    values must be captured: `name` for Dagster asset-key resolution and
+    `identifier` (as `table`) for SQL queries."""
+    from dbt_dagsterizer.assets.sources import automation
+
+    manifest = {
+        "sources": {
+            "source.mssqlserver.testing": {
+                "source_name": "mssqlserver",
+                "name": "testing",
+                "identifier": "Test",
+                "meta": {
+                    "luban": {
+                        "observe": {
+                            "watermark_column": "updated_at",
+                        }
+                    }
+                },
+            },
+        }
+    }
+
+    target_dir = tmp_path / "target"
+    target_dir.mkdir()
+    (target_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    monkeypatch.setattr(automation, "prepare_manifest_if_missing", lambda: None)
+    monkeypatch.setattr(automation, "get_dbt_project_dir", lambda: tmp_path)
+
+    assert automation.load_automation_observable_sources() == [
+        {
+            "source": "mssqlserver",
+            "table": "Test",
+            "name": "testing",
+            "watermark_column": "updated_at",
+            "watermark_sql": None,
+            "group": None,
+        },
+    ]
+
+
+def test_build_observable_source_assets_resolves_key_via_dbt_name(monkeypatch):
+    """When `name` differs from `table` (identifier), the factory must use
+    `name` for Dagster asset-key resolution and `table` for the SQL query."""
+    from dbt_dagsterizer.assets.sources import factory
+
+    queries: list[str] = []
+    decorator_kwargs: dict[str, object] = {}
+
+    class FakeStarRocks:
+        def query_scalar(self, sql: str) -> str:
+            queries.append(sql)
+            return "2026-06-10T00:00:00"
+
+    def fake_observable_source_asset(**kwargs):
+        decorator_kwargs.update(kwargs)
+
+        def decorator(fn):
+            return fn
+
+        return decorator
+
+    # dagster_dbt generates output names from the dbt `name` field, so the
+    # output name uses "testing" even though the identifier is "Test".
+    monkeypatch.setattr(
+        factory,
+        "get_asset_keys_by_output_name_for_source",
+        lambda _dbt_assets_seq, _source: {
+            "source_test_dbt_mssqlserver_testing": dg.AssetKey(["mssqlserver", "testing"])
+        },
+    )
+    monkeypatch.setattr(factory.dg, "observable_source_asset", fake_observable_source_asset)
+
+    assets = factory.build_observable_source_assets(
+        dbt_assets=None,
+        source_specs=[
+            {
+                "source": "mssqlserver",
+                "table": "Test",
+                "name": "testing",
+                "watermark_column": "updated_at",
+            }
+        ],
+    )
+
+    result = assets[0](SimpleNamespace(resources=SimpleNamespace(starrocks=FakeStarRocks())))
+
+    assert isinstance(result, dg.DataVersion)
+    # Key resolution used the dbt name "testing", not the identifier "Test"
+    assert decorator_kwargs["key"] == dg.AssetKey(["mssqlserver", "testing"])
+    # SQL query uses the identifier "Test" for the actual table reference
+    assert queries == ["select max(`updated_at`) from `mssqlserver`.`Test`"]

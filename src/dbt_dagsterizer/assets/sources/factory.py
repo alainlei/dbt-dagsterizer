@@ -81,6 +81,11 @@ def build_observable_source_assets(
     def make_asset(spec: dict):
         source_name = spec["source"]
         table_name = spec["table"]
+        # The dbt `name` field is used by dagster_dbt to generate output names;
+        # it may differ from `table_name` (which comes from `identifier` and is
+        # used for SQL queries).  Fall back to `table_name` for backward
+        # compatibility with specs that predate the `name` key.
+        dbt_name = spec.get("name") or table_name
         watermark_column = spec.get("watermark_column")
         watermark_sql = spec.get("watermark_sql")
 
@@ -100,7 +105,7 @@ def build_observable_source_assets(
                 db_default = source_name
 
         @dg.observable_source_asset(
-            key=resolve_source_asset_key(source_name, table_name),
+            key=resolve_source_asset_key(source_name, dbt_name),
             group_name=_resolve_source_group_name(spec),
             required_resource_keys={"starrocks"},
         )
