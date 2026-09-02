@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 import dagster as dg
 
 from ...orchestration_config import normalize_timezone
+from ...partitions import add_months, month_floor
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,8 @@ def build_replication_schedules(schedule_specs: list[dict]) -> list:
         lookback_hours = int(spec.get("partition_lookback_hours", spec.get("lookback_hours", 0)))
         offset_days = int(spec.get("partition_offset_days", spec.get("offset_days", 1)))
         lookback_days = int(spec.get("partition_lookback_days", spec.get("lookback_days", 0)))
+        offset_months = int(spec.get("partition_offset_months", spec.get("offset_months", 1)))
+        lookback_months = int(spec.get("partition_lookback_months", spec.get("lookback_months", 0)))
 
         if job_name not in jobs_by_name:
             raise ValueError(f"Replication schedule '{schedule_name}' references unknown job '{job_name}'")
@@ -90,6 +93,26 @@ def build_replication_schedules(schedule_specs: list[dict]) -> list:
                 return run_requests
 
             schedules.append(_hourly_schedule)
+
+        elif partition_type == "monthly":
+            @dg.schedule(
+                name=schedule_name,
+                cron_schedule=cron_schedule,
+                job=job,
+                default_status=default_status,
+                execution_timezone=execution_timezone,
+            )
+            def _monthly_schedule(context):
+                scheduled_time = context.scheduled_execution_time or datetime.now(timezone.utc)
+                # Dagster MonthlyPartitionsDefinition keys are "YYYY-MM-01"
+                anchor_month = add_months(month_floor(scheduled_time.date()), -offset_months)
+                run_requests = []
+                for i in range(lookback_months + 1):
+                    partition_key = add_months(anchor_month, -i).isoformat()
+                    run_requests.append(dg.RunRequest(partition_key=partition_key))
+                return run_requests
+
+            schedules.append(_monthly_schedule)
 
         else:
             raise ValueError(f"Unsupported partition_type: {partition_type}")

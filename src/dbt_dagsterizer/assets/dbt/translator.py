@@ -51,10 +51,12 @@ class LubanDagsterDbtTranslator(DagsterDbtTranslator):
         automation_observable_tables: set[str] | None = None,
         partitions_by_model: dict[str, str] | None = None,
         hourly_partitions_def: Optional[dg.PartitionsDefinition] = None,
+        monthly_partitions_def: Optional[dg.PartitionsDefinition] = None,
     ):
         super().__init__()
         self.daily_partitions_def = daily_partitions_def
         self.hourly_partitions_def = hourly_partitions_def
+        self.monthly_partitions_def = monthly_partitions_def
         self.automation_observable_tables = automation_observable_tables or set()
         self.partitions_by_model = partitions_by_model or {}
         self.propagator_mode = os.getenv(
@@ -71,13 +73,15 @@ class LubanDagsterDbtTranslator(DagsterDbtTranslator):
             str(name)) == "daily"
         is_hourly = bool(name) and self.partitions_by_model.get(
             str(name)) == "hourly"
+        is_monthly = bool(name) and self.partitions_by_model.get(
+            str(name)) == "monthly"
 
         automation_tables = self.automation_observable_tables
 
         if name in automation_tables:
             return dg.AutomationCondition.eager()
 
-        if self._propagator_mode_is_eager() and (is_daily or is_hourly):
+        if self._propagator_mode_is_eager() and (is_daily or is_hourly or is_monthly):
             return dg.AutomationCondition.eager()
 
         if "dim" in tags:
@@ -123,7 +127,7 @@ class LubanDagsterDbtTranslator(DagsterDbtTranslator):
         This enables partitions to be visible on the Assets page in the Dagster UI.
         
         IMPORTANT: This only works when ALL models in the same @dbt_assets have the SAME
-        partition type (e.g., all daily, all hourly, or all unpartitioned). If you have mixed partition
+        partition type (e.g., all daily, all hourly, all monthly, or all unpartitioned). If you have mixed partition
         types, keep returning None and handle partitions at the job/schedule level instead.
         """
         resource_type = dbt_resource_props.get("resource_type")
@@ -142,6 +146,9 @@ class LubanDagsterDbtTranslator(DagsterDbtTranslator):
 
         if partition_type == "hourly":
             return self.hourly_partitions_def
+
+        if partition_type == "monthly":
+            return self.monthly_partitions_def
         
         # Model is unpartitioned or partition type not defined
         return None

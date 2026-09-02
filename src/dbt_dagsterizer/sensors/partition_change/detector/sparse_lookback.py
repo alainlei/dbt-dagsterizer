@@ -4,11 +4,18 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Any
 
+from ....partitions import add_months, month_floor
+
+GRANULARITY_DAY = "day"
+GRANULARITY_MONTH = "month"
+
 
 @dataclass(frozen=True)
 class SparseLookbackImpactRange:
     start_offset_days: int
     end_offset_days: int
+    start_offset_months: int = 0
+    end_offset_months: int = 0
 
 
 @dataclass(frozen=True)
@@ -17,6 +24,23 @@ class SparseLookbackMeta:
     partition_date_expr: str
     updated_at_expr: str
     impact_range: SparseLookbackImpactRange | None = None
+
+
+def _require_granularity(granularity: str) -> str:
+    if granularity not in {GRANULARITY_DAY, GRANULARITY_MONTH}:
+        raise ValueError(f"Unsupported granularity: {granularity}")
+    return granularity
+
+
+def _partition_sql_expr(partition_date_expr: str, granularity: str) -> str:
+    """Build the SQL expression whose value identifies a partition.
+
+    Month granularity truncates to the first of the month so that the returned
+    values line up with ``MonthlyPartitionsDefinition`` keys (``YYYY-MM-01``).
+    """
+    if granularity == GRANULARITY_MONTH:
+        return f"date_trunc('month', CAST(({partition_date_expr}) AS DATE))"
+    return f"CAST(({partition_date_expr}) AS DATE)"
 
 
 def _require_str(value: Any, *, path: str) -> str:
@@ -64,7 +88,9 @@ def parse_sparse_lookback_meta(
     *,
     meta: dict[str, Any],
     manifest: dict[str, Any] | None = None,
+    granularity: str = GRANULARITY_DAY,
 ) -> SparseLookbackMeta:
+    granularity = _require_granularity(granularity)
     detect_relation_value = meta.get("detect_relation")
     detect_source_value = meta.get("detect_source")
 
@@ -94,14 +120,38 @@ def parse_sparse_lookback_meta(
     if isinstance(impact, dict):
         impact_type = impact.get("type")
         if impact_type == "range":
-            start_offset_days = int(impact.get("start_offset_days", 0))
-            end_offset_days = int(impact.get("end_offset_days", 0))
-            if start_offset_days > end_offset_days:
-                raise ValueError("impact.start_offset_days cannot be greater than impact.end_offset_days")
-            impact_range = SparseLookbackImpactRange(
-                start_offset_days=start_offset_days,
-                end_offset_days=end_offset_days,
-            )
+            if granularity == GRANULARITY_MONTH:
+                if "start_offset_days" in impact or "end_offset_days" in impact:
+                    raise ValueError(
+                        "impact.start_offset_days/end_offset_days cannot be used with a monthly "
+                        "detector; use impact.start_offset_months/end_offset_months"
+                    )
+                start_offset_months = int(impact.get("start_offset_months", 0))
+                end_offset_months = int(impact.get("end_offset_months", 0))
+                if start_offset_months > end_offset_months:
+                    raise ValueError(
+                        "impact.start_offset_months cannot be greater than impact.end_offset_months"
+                    )
+                impact_range = SparseLookbackImpactRange(
+                    start_offset_days=0,
+                    end_offset_days=0,
+                    start_offset_months=start_offset_months,
+                    end_offset_months=end_offset_months,
+                )
+            else:
+                if "start_offset_months" in impact or "end_offset_months" in impact:
+                    raise ValueError(
+                        "impact.start_offset_months/end_offset_months cannot be used with a daily "
+                        "detector; use impact.start_offset_days/end_offset_days"
+                    )
+                start_offset_days = int(impact.get("start_offset_days", 0))
+                end_offset_days = int(impact.get("end_offset_days", 0))
+                if start_offset_days > end_offset_days:
+                    raise ValueError("impact.start_offset_days cannot be greater than impact.end_offset_days")
+                impact_range = SparseLookbackImpactRange(
+                    start_offset_days=start_offset_days,
+                    end_offset_days=end_offset_days,
+                )
         else:
             raise ValueError(f"Unsupported impact type: {impact_type}")
 
@@ -121,14 +171,23 @@ def _as_sql_date(value: date) -> str:
     return value.strftime("%Y-%m-%d")
 
 
-def expand_impacted_dates(dates: set[date], impact_range: SparseLookbackImpactRange | None) -> set[date]:
+def expand_impacted_dates(
+    dates: set[date],
+    impact_range: SparseLookbackImpactRange | None,
+    granularity: str = GRANULARITY_DAY,
+) -> set[date]:
     if not dates or impact_range is None:
         return dates
 
+    granularity = _require_granularity(granularity)
     expanded: set[date] = set()
     for d in dates:
-        for offset in range(impact_range.start_offset_days, impact_range.end_offset_days + 1):
-            expanded.add(d + timedelta(days=offset))
+        if granularity == GRANULARITY_MONTH:
+            for offset in range(impact_range.start_offset_months, impact_range.end_offset_months + 1):
+                expanded.add(add_months(month_floor(d), offset))
+        else:
+            for offset in range(impact_range.start_offset_days, impact_range.end_offset_days + 1):
+                expanded.add(d + timedelta(days=offset))
     return expanded
 
 
@@ -139,8 +198,10 @@ def detect_changed_partition_dates(
     window_start: date,
     window_end: date,
     since_ts: datetime,
+    granularity: str = GRANULARITY_DAY,
 ) -> set[date]:
-    partition_date_expr = f"CAST(({meta.partition_date_expr}) AS DATE)"
+    granularity = _require_granularity(granularity)
+    partition_date_expr = _partition_sql_expr(meta.partition_date_expr, granularity)
     sql = "\n".join(
         [
             "SELECT DISTINCT",
@@ -166,7 +227,7 @@ def detect_changed_partition_dates(
             continue
         dates.add(date.fromisoformat(str(v)))
 
-    return expand_impacted_dates(dates, meta.impact_range)
+    return expand_impacted_dates(dates, meta.impact_range, granularity=granularity)
 
 
 def detect_partition_max_watermarks(
@@ -175,8 +236,10 @@ def detect_partition_max_watermarks(
     meta: SparseLookbackMeta,
     window_start: date,
     window_end: date,
+    granularity: str = GRANULARITY_DAY,
 ) -> dict[date, datetime]:
-    partition_date_expr = f"CAST(({meta.partition_date_expr}) AS DATE)"
+    granularity = _require_granularity(granularity)
+    partition_date_expr = _partition_sql_expr(meta.partition_date_expr, granularity)
     sql = "\n".join(
         [
             "SELECT",

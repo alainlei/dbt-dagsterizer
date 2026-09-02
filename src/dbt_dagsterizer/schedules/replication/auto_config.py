@@ -53,12 +53,14 @@ def build_auto_replication_schedule_specs() -> list[dict]:
         job_name = f"replicate_{model_name}_job"  # Match job name with _job suffix
         partition_type = idx.partitions_by_model.get(model_name, "unpartitioned")
 
-        # Default: run 30 minutes after midnight UTC (adjust as needed)
+        # Default: 00:30 UTC daily, except monthly which fires once a month on the 1st
+        # (with the default offset_months=1 that replicates the month that just closed).
+        cron_schedule = "30 0 1 * *" if partition_type == "monthly" else "30 0 * * *"
         specs.append(
             {
                 "name": f"replicate_{model_name}_schedule",
                 "job_name": job_name,
-                "cron_schedule": "30 0 * * *",  # 00:30 UTC daily
+                "cron_schedule": cron_schedule,
                 "partition_type": partition_type,
                 "enabled": True,
             }

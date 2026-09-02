@@ -37,7 +37,7 @@ def test_partition_change_sensor_applies_impact_range(monkeypatch):
     monkeypatch.setattr(
         factory,
         "parse_sparse_lookback_meta",
-        lambda meta, manifest: _Sparse(
+        lambda meta, manifest, granularity="day": _Sparse(
             detect_relation="ods.orders",
             impact_range=SparseLookbackImpactRange(start_offset_days=-1, end_offset_days=1),
         ),

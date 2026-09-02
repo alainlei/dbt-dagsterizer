@@ -269,3 +269,56 @@ def test_validate_structure_rejects_unknown_timezone():
     issues = validate_orchestration_structure(orchestration=orch)
     errors = [i for i in issues if i.level == "error"]
     assert any("invalid timezone" in i.message for i in errors)
+
+
+# --- monthly schedule timezone threading ---
+
+
+def _monthly_schedule_specs(tmp_path: Path, monkeypatch, timezone: str | None):
+    """Build monthly_at specs from a scratch dagsterization.yml."""
+    from dbt_dagsterizer.schedules.dbt import auto_config
+
+    cfg = {
+        "version": 1,
+        "partitions": {"monthly": ["fact_revenue"]},
+        "jobs": {"revenue_job": {"models": ["fact_revenue"], "partitions": "monthly"}},
+        "schedules": {
+            "revenue_monthly": {
+                "type": "monthly_at",
+                "job_name": "revenue_job",
+                "hour": 1,
+                "minute": 15,
+                "day_of_month": 1,
+                "lookback_months": 0,
+                "offset_months": 1,
+            },
+        },
+    }
+    if timezone is not None:
+        cfg["timezone"] = timezone
+
+    monkeypatch.setattr(auto_config, "load_manifest", lambda: {"nodes": {}})
+    monkeypatch.setattr(auto_config, "iter_models", lambda _manifest: [])
+    monkeypatch.setattr(auto_config, "get_dbt_project_dir", lambda: tmp_path)
+
+    y = YAML()
+    with (tmp_path / "dagsterization.yml").open("w", encoding="utf-8") as f:
+        y.dump(cfg, f)
+
+    return auto_config.build_auto_dbt_schedule_specs()
+
+
+def test_monthly_at_schedule_spec_inherits_global_timezone(tmp_path: Path, monkeypatch):
+    """A monthly_at schedule runs in the timezone configured at the top of dagsterization.yml."""
+    specs = _monthly_schedule_specs(tmp_path, monkeypatch, timezone="Asia/Shanghai")
+
+    assert len(specs) == 1
+    assert specs[0]["partition_type"] == "monthly"
+    assert specs[0]["timezone"] == "Asia/Shanghai"
+
+
+def test_monthly_at_schedule_spec_defaults_timezone_to_utc(tmp_path: Path, monkeypatch):
+    """Without a global timezone, monthly_at schedules run in UTC."""
+    specs = _monthly_schedule_specs(tmp_path, monkeypatch, timezone=None)
+
+    assert specs[0]["timezone"] == "UTC"

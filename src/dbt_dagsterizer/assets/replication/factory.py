@@ -32,10 +32,11 @@ from ...resources.starrocks import make_starrocks_resource
 from .executor import execute_replication
 
 
-def _resolve_orch_context() -> tuple[bool, bool, str]:
+def _resolve_orch_context() -> tuple[bool, bool, bool, str]:
     """Load orchestration config once and return partition + timezone context.
 
-    Returns a tuple ``(include_current_day_partition, include_current_hour_partition, timezone)``.
+    Returns a tuple ``(include_current_day_partition, include_current_hour_partition,
+    include_current_month_partition, timezone)``.
     """
     dbt_project_dir = get_dbt_project_dir()
     cfg_path = resolve_orchestration_path(
@@ -47,6 +48,7 @@ def _resolve_orch_context() -> tuple[bool, bool, str]:
     return (
         idx.daily_include_current_day_partition,
         idx.hourly_include_current_hour_partition,
+        idx.monthly_include_current_month_partition,
         idx.timezone,
     )
 
@@ -56,13 +58,15 @@ def build_replication_assets(specs: list[dict]) -> list[dg.AssetsDefinition]:
 
     Each asset:
     - Depends on the dbt model asset via ``deps=[AssetKey(source_relation)]``
-    - Uses the same ``partitions_def`` as the dbt model (daily / hourly / None)
+    - Uses the same ``partitions_def`` as the dbt model (daily / hourly / monthly / None)
     - Executes ``execute_replication`` when materialized
     """
     if not specs:
         return []
 
-    include_current_day, include_current_hour, timezone = _resolve_orch_context()
+    include_current_day, include_current_hour, include_current_month, timezone = (
+        _resolve_orch_context()
+    )
 
     assets: list[dg.AssetsDefinition] = []
     for spec in specs:
@@ -71,6 +75,7 @@ def build_replication_assets(specs: list[dict]) -> list[dg.AssetsDefinition]:
             partition_type,
             include_current_day_partition=include_current_day,
             include_current_hour_partition=include_current_hour,
+            include_current_month_partition=include_current_month,
             timezone=timezone,
         )
 

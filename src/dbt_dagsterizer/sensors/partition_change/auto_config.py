@@ -17,7 +17,7 @@ from ...orchestration_config import (
     load_or_create as load_orch,
 )
 from ...resources.dbt import get_dbt_project_dir
-from .detector.presets import daily_partition_change
+from .detector.presets import daily_partition_change, monthly_partition_change
 from .propagator.presets import partition_change_propagation
 
 
@@ -80,6 +80,25 @@ def build_auto_partition_change_detection_specs() -> list[dict]:
                 detector_meta["detect_source"] = detector.get("detect_source")
             if detector.get("impact"):
                 detector_meta["impact"] = detector.get("impact")
+
+            # Only models explicitly marked monthly get a month-granular detector; hourly and
+            # unpartitioned models keep the existing daily-granular behaviour.
+            if idx.partitions_by_model.get(model) == "monthly":
+                lookback_months = int(detector.get("lookback_months", 3))
+                offset_months = int(detector.get("offset_months", 0))
+                specs.append(
+                    monthly_partition_change(
+                        name=str(sensor_name),
+                        job_name=str(job_name),
+                        detector_model=model,
+                        lookback_months=lookback_months,
+                        offset_months=offset_months,
+                        enabled=True,
+                        minimum_interval_seconds=minimum_interval_seconds,
+                        meta=detector_meta,
+                    )
+                )
+                continue
 
             specs.append(
                 daily_partition_change(

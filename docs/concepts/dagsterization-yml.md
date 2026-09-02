@@ -38,6 +38,9 @@ partitions:
   hourly: []
   hourly_config:
     include_current_hour_partition: true
+  monthly: []
+  monthly_config:
+    include_current_month_partition: true
 jobs:                               # Grouped job definitions
   job_name:
     models: []
@@ -105,8 +108,9 @@ The `partitions` section assigns partitioning strategies to dbt models. Each mod
 |------|-------------|------------------|----------------------|
 | `daily` | One partition per day | `DAGSTER_DAILY_PARTITIONS_START_DATE` (YYYY-MM-DD) | ✅ Separate group |
 | `hourly` | One partition per hour | `DAGSTER_HOURLY_PARTITIONS_START_DATE` (YYYY-MM-DD-HH:MM, optionally with timezone offset e.g. `+08:00`) | ✅ Separate group |
+| `monthly` | One partition per month, keyed by the first day (`YYYY-MM-01`) | `DAGSTER_MONTHLY_PARTITIONS_START_DATE` (YYYY-MM-DD) | ✅ Separate group |
 
-Daily partition parameters can be configured in `partitions.daily_config` (see [Daily Partition Configuration](#daily-partition-configuration)). Hourly partition parameters can be configured in `partitions.hourly_config` (see [Hourly Partition Configuration](#hourly-partition-configuration)). No environment variable override is supported.
+Daily partition parameters can be configured in `partitions.daily_config` (see [Daily Partition Configuration](#daily-partition-configuration)). Hourly partition parameters can be configured in `partitions.hourly_config` (see [Hourly Partition Configuration](#hourly-partition-configuration)). Monthly partition parameters can be configured in `partitions.monthly_config` (see [Monthly Partition Configuration](#monthly-partition-configuration)). No environment variable override is supported.
 
 ### Daily Partitions
 
@@ -187,6 +191,47 @@ partitions:
 dbt-dagsterizer meta hourly-config --include-current-hour-partition
 ```
 
+### Monthly Partitions
+
+```yaml
+partitions:
+  monthly:
+    - monthly_revenue
+    - fact_sales_monthly
+```
+
+Partition keys are the first day of each month (`2026-03-01`, `2026-04-01`, ...).
+
+**CLI equivalent**:
+```bash
+dbt-dagsterizer meta partition --models monthly_revenue,fact_sales_monthly --type monthly
+```
+
+### Monthly Partition Configuration
+
+Configure parameters for the `MonthlyPartitionsDefinition` used by all monthly-partitioned models:
+
+```yaml
+partitions:
+  monthly:
+    - monthly_revenue
+    - fact_sales_monthly
+  monthly_config:
+    include_current_month_partition: true
+```
+
+**Fields**:
+- `include_current_month_partition` (bool, default: `true`): Whether the in-progress month's partition should be available in the `MonthlyPartitionsDefinition`.
+  - `true` (default): The current month's partition is also available (equivalent to `end_offset: 1`, useful for same-month processing).
+  - `false`: Only partitions ending *before* the current time are available (equivalent to `end_offset: 0`).
+
+> **Note**: This is different from schedule `offset_months`, which controls *which partition* a schedule targets. `include_current_month_partition` controls the *set of available partitions* in the partition definition itself.
+
+**CLI equivalent**:
+```bash
+dbt-dagsterizer meta monthly-config --include-current-month-partition
+```
+
 
 ## Jobs
 
@@ -239,7 +284,7 @@ jobs:
 **Fields**:
 - `models`: List of dbt models in this job (required)
 - `include_upstream`: Whether to include upstream dependencies (default: `false`)
-- `partitions`: Partition strategy for the job (`daily`, `hourly`, `unpartitioned`)
+- `partitions`: Partition strategy for the job (`daily`, `hourly`, `monthly`, `unpartitioned`)
 
 **CLI equivalent**:
 ```bash
@@ -282,7 +327,7 @@ schedules:
 ```
 
 **Fields**:
-- `type`: Schedule type (`daily_at` or `hourly_at`)
+- `type`: Schedule type (`daily_at`, `hourly_at` or `monthly_at`)
 - `job_name`: Target job name (required)
 - `hour`: Hour of day (0-23)
 - `minute`: Minute of hour (0-59)
@@ -335,6 +380,47 @@ dbt-dagsterizer meta schedule \
   --enabled
 ```
 
+### Monthly Schedule
+
+```yaml
+schedules:
+  revenue_monthly_schedule:
+    type: monthly_at
+    job_name: dbt_monthly_revenue_asset_job
+    day_of_month: 1
+    hour: 3
+    minute: 0
+    lookback_months: 0
+    offset_months: 1
+    enabled: true
+```
+
+**Fields**:
+- `type`: Schedule type (`monthly_at`)
+- `job_name`: Target job name (required)
+- `day_of_month`: Day of the month the schedule fires (1-28, default: 1). Values above 28 are rejected because cron never fires on a 29th-31st during a shorter month, which would silently stall the schedule.
+- `hour`: Hour of day (0-23, required)
+- `minute`: Minute of hour (0-59)
+- `lookback_months`: How many past monthly partitions to process (default: 0)
+- `offset_months`: Partition offset in months (default: 1 = previous month, 0 = current month)
+- `enabled`: Whether schedule is active (default: `true`)
+
+Monthly schedules emit `YYYY-MM-01` partition keys, so the job they target must be `monthly`-partitioned.
+
+**CLI equivalent**:
+```bash
+dbt-dagsterizer meta schedule \
+  --models monthly_revenue \
+  --name revenue_monthly_schedule \
+  --schedule-type monthly_at \
+  --day-of-month 1 \
+  --hour 3 \
+  --minute 0 \
+  --lookback-months 0 \
+  --offset-months 1 \
+  --enabled
+```
+
 ### Schedule Offset Hours
 
 - `offset_hours: 1` (default): Run for the **previous hour's** partition
@@ -354,6 +440,16 @@ dbt-dagsterizer meta schedule \
 - `offset_days: 0`: Run for **today's** partition
   - Schedule runs at 2:00 AM on Day D → processes partition D
   - Use when you need same-day processing
+
+### Schedule Offset Months
+
+- `offset_months: 1` (default): Run for the **previous month's** partition
+  - Schedule runs on `day_of_month` of Month M → processes partition M-1
+  - **Recommended** for most monthly jobs, since the target month has finished receiving data
+
+- `offset_months: 0`: Run for the **current month's** partition
+  - Schedule runs on `day_of_month` of Month M → processes partition M
+  - Use when you need same-month processing; requires `include_current_month_partition: true`
 
 ---
 
@@ -383,8 +479,10 @@ partition_change:
 **Fields**:
 - `model`: dbt model to monitor (required)
 - `enabled`: Whether detector is active (default: `true`)
-- `lookback_days`: How far back to check for changes (default: 0)
-- `offset_days`: Partition offset (default: 0)
+- `lookback_days`: How far back to check for changes (default: 7)
+- `offset_days`: Partition offset (default: 1)
+- `lookback_months`: How far back to check for changes, in months (default: 3). Used **only** when the monitored model is `monthly`-partitioned; `lookback_days`/`offset_days` are ignored in that case.
+- `offset_months`: Partition offset in months (default: 0, i.e. include the in-progress month). Used **only** when the monitored model is `monthly`-partitioned.
 - `detect_source`: Source table to monitor
   - `source`: dbt source name
   - `table`: dbt source table name
@@ -692,12 +790,17 @@ partitions:
     - real_time_events
   hourly_config:
     include_current_hour_partition: true
+  monthly:
+    - fact_revenue_monthly
+  monthly_config:
+    include_current_month_partition: true
 
 # Per-model asset jobs (dwd layer)
 asset_jobs:
   - orders
   - customers
   - real_time_events
+  - fact_revenue_monthly
 
 # Grouped jobs (dws layer)
 jobs:
@@ -734,6 +837,16 @@ schedules:
     minute: 5
     lookback_hours: 0
     offset_hours: 1
+    enabled: true
+
+  revenue_monthly_schedule:
+    type: monthly_at
+    job_name: dbt_fact_revenue_monthly_asset_job
+    day_of_month: 1
+    hour: 4
+    minute: 0
+    lookback_months: 0
+    offset_months: 1
     enabled: true
 
 # Partition change sensors
@@ -792,12 +905,16 @@ dbt-dagsterizer meta init
 # Set partitions
 dbt-dagsterizer meta partition --models orders --type daily
 dbt-dagsterizer meta partition --models real_time_events --type hourly
+dbt-dagsterizer meta partition --models fact_revenue_monthly --type monthly
 
 # Configure daily partition parameters
 dbt-dagsterizer meta partition-config --include-current-day-partition
 
 # Configure hourly partition parameters
 dbt-dagsterizer meta hourly-config --include-current-hour-partition
+
+# Configure monthly partition parameters
+dbt-dagsterizer meta monthly-config --include-current-month-partition
 
 # Set global schedule timezone
 dbt-dagsterizer meta timezone --timezone "Asia/Macau"
@@ -814,6 +931,10 @@ dbt-dagsterizer meta schedule --models orders --hour 2 --minute 0
 # Create hourly schedule
 dbt-dagsterizer meta schedule --models real_time_events --name events_hourly \
   --schedule-type hourly_at --minute 5
+
+# Create monthly schedule
+dbt-dagsterizer meta schedule --models fact_revenue_monthly --name revenue_monthly \
+  --schedule-type monthly_at --day-of-month 1 --hour 4 --minute 0 --offset-months 1
 
 # Create partition change detector
 dbt-dagsterizer meta partition-change detector \
@@ -882,7 +1003,7 @@ Commit `dagsterization.yml` to your dbt project repository. Changes should be re
 - Verify `enabled: true`
 - Check job name matches exactly
 - Ensure partition type matches job partition config
-- Verify environment variables are set (e.g., `DAGSTER_DAILY_PARTITIONS_START_DATE` or `DAGSTER_HOURLY_PARTITIONS_START_DATE`)
+- Verify environment variables are set (e.g., `DAGSTER_DAILY_PARTITIONS_START_DATE`, `DAGSTER_HOURLY_PARTITIONS_START_DATE` or `DAGSTER_MONTHLY_PARTITIONS_START_DATE`)
 
 ### Partition change sensor not triggering
 

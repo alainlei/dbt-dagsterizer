@@ -51,10 +51,10 @@ def build_auto_dbt_job_specs() -> list[dict]:
             partitions = job_cfg.get("partitions")
             partitions_value = None
             if partitions is not None:
-                # Validate partition spec: daily, hourly, or unpartitioned
-                if partitions not in {"daily", "hourly", "unpartitioned"}:
+                # Validate partition spec: daily, hourly, monthly, or unpartitioned
+                if partitions not in {"daily", "hourly", "monthly", "unpartitioned"}:
                     raise ValueError(
-                        f"Orchestration job '{job_name}' partitions must be daily|hourly|unpartitioned"
+                        f"Orchestration job '{job_name}' partitions must be daily|hourly|monthly|unpartitioned"
                     )
                 partitions_value = partitions
             else:

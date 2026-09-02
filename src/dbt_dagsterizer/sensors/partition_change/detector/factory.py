@@ -7,8 +7,11 @@ import dagster as dg
 
 from ....assets.dbt.prepare import prepare_manifest_if_missing
 from ....jobs.dbt.jobs import get_dbt_jobs_by_name
+from ....partitions import add_months, month_floor
 from .dbt_manifest import load_manifest
 from .sparse_lookback import (
+    GRANULARITY_DAY,
+    GRANULARITY_MONTH,
     detect_partition_max_watermarks,
     expand_impacted_dates,
     parse_sparse_lookback_meta,
@@ -65,9 +68,11 @@ def build_dbt_partition_change_sensors(*, specs: list[dict]) -> list[dg.SensorDe
         default_status = dg.DefaultSensorStatus.RUNNING if enabled else dg.DefaultSensorStatus.STOPPED
 
         partition_type = spec.get("partition_type", "daily")
-        
-        if partition_type != "daily":
+
+        if partition_type not in {"daily", "monthly"}:
             raise ValueError(f"Unsupported partition_type: {partition_type}")
+
+        granularity = GRANULARITY_MONTH if partition_type == "monthly" else GRANULARITY_DAY
 
         sensor_name = spec["name"]
         job_name = spec["job_name"]
@@ -76,6 +81,8 @@ def build_dbt_partition_change_sensors(*, specs: list[dict]) -> list[dg.SensorDe
 
         lookback_days = int(spec.get("lookback_days", 0))
         offset_days = int(spec.get("offset_days", 0))
+        lookback_months = int(spec.get("lookback_months", 0))
+        offset_months = int(spec.get("offset_months", 0))
         minimum_interval_seconds = int(spec.get("minimum_interval_seconds", 60))
 
         @dg.sensor(
@@ -91,19 +98,31 @@ def build_dbt_partition_change_sensors(*, specs: list[dict]) -> list[dg.SensorDe
             detector_meta = spec.get("meta")
             if not isinstance(detector_meta, dict) or not detector_meta:
                 raise ValueError(f"Partition-change detector spec '{sensor_name}' is missing meta")
-            sparse_meta = parse_sparse_lookback_meta(meta=detector_meta, manifest=manifest)
+            sparse_meta = parse_sparse_lookback_meta(
+                meta=detector_meta, manifest=manifest, granularity=granularity
+            )
 
             now = datetime.now(timezone.utc)
-            anchor_day = (now - timedelta(days=offset_days)).date()
-            window_start = anchor_day - timedelta(days=lookback_days)
-            window_end = anchor_day
+            if granularity == GRANULARITY_MONTH:
+                window_end = add_months(month_floor(now.date()), -offset_months)
+                window_start = add_months(window_end, -lookback_months)
+            else:
+                anchor_day = (now - timedelta(days=offset_days)).date()
+                window_start = anchor_day - timedelta(days=lookback_days)
+                window_end = anchor_day
 
             prior_by_partition = _parse_watermark_cursor(context.cursor)
             legacy_cursor_ts = None
             if prior_by_partition is None:
                 legacy_cursor_ts = _parse_legacy_cursor_ts(context.cursor)
                 if legacy_cursor_ts is None:
-                    legacy_cursor_ts = (now - timedelta(days=lookback_days + offset_days + 1)).replace(tzinfo=None)
+                    if granularity == GRANULARITY_MONTH:
+                        bootstrap = add_months(
+                            month_floor(now.date()), -(lookback_months + offset_months + 1)
+                        )
+                        legacy_cursor_ts = datetime(bootstrap.year, bootstrap.month, bootstrap.day)
+                    else:
+                        legacy_cursor_ts = (now - timedelta(days=lookback_days + offset_days + 1)).replace(tzinfo=None)
                 prior_by_partition = {}
 
             try:
@@ -112,6 +131,7 @@ def build_dbt_partition_change_sensors(*, specs: list[dict]) -> list[dg.SensorDe
                     meta=sparse_meta,
                     window_start=window_start,
                     window_end=window_end,
+                    granularity=granularity,
                 )
             except Exception as e:
                 msg = str(e)
@@ -164,7 +184,9 @@ def build_dbt_partition_change_sensors(*, specs: list[dict]) -> list[dg.SensorDe
             else:
                 partitions_to_emit: dict[date, datetime] = {}
                 for base_date, base_watermark in changed_partitions.items():
-                    impacted_dates = expand_impacted_dates({base_date}, impact_range)
+                    impacted_dates = expand_impacted_dates(
+                        {base_date}, impact_range, granularity=granularity
+                    )
                     for impacted_date in impacted_dates:
                         existing = partitions_to_emit.get(impacted_date)
                         if existing is None or base_watermark > existing:

@@ -28,7 +28,11 @@ from ...otel import (
     otel_span,
     otel_transaction_span,
 )
-from ...partitions import get_daily_partitions_def, get_hourly_partitions_def
+from ...partitions import (
+    get_daily_partitions_def,
+    get_hourly_partitions_def,
+    get_monthly_partitions_def,
+)
 from ...resources.dbt import get_dbt_project_dir
 from ...resources.starrocks import make_starrocks_resource
 from ..sources.automation import load_automation_observable_sources
@@ -197,9 +201,23 @@ def get_dbt_assets():
         else None
     )
 
+    # Get monthly partitions definition only if there are monthly-partitioned models
+    has_monthly_partitions = any(
+        ptype == "monthly" for ptype in orch_index.partitions_by_model.values()
+    )
+    monthly_partitions_def = (
+        get_monthly_partitions_def(
+            include_current_month_partition=orch_index.monthly_include_current_month_partition,
+            timezone=orch_index.timezone,
+        )
+        if has_monthly_partitions
+        else None
+    )
+
     translator = LubanDagsterDbtTranslator(
         daily_partitions_def=daily_partitions_def,
         hourly_partitions_def=hourly_partitions_def,
+        monthly_partitions_def=monthly_partitions_def,
         automation_observable_tables=automation_observable_tables,
         partitions_by_model=orch_index.partitions_by_model,
     )

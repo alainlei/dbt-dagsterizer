@@ -94,6 +94,7 @@ def get_dbt_jobs_by_name():
             build_auto_dbt_job_specs() + manual_specs,
             include_current_day_partition=orch_index.daily_include_current_day_partition,
             include_current_hour_partition=orch_index.hourly_include_current_hour_partition,
+            include_current_month_partition=orch_index.monthly_include_current_month_partition,
             timezone=orch_index.timezone,
         )
     return _dbt_jobs_by_name
