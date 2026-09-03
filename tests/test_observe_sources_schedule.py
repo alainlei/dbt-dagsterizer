@@ -7,7 +7,7 @@ def test_observe_sources_schedule_uses_job_name(monkeypatch):
     from dbt_dagsterizer.schedules.sources.schedules import get_observe_sources_schedule
 
     monkeypatch.setattr(
-        "dbt_dagsterizer.assets.sources.automation.load_automation_observable_sources",
+        "dbt_dagsterizer.assets.sources.automation.load_filtered_observable_sources",
         lambda: [{"source": "ods", "table": "orders", "watermark_column": "updated_at"}],
     )
 

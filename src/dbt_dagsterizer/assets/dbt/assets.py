@@ -35,7 +35,7 @@ from ...partitions import (
 )
 from ...resources.dbt import get_dbt_project_dir
 from ...resources.starrocks import make_starrocks_resource
-from ..sources.automation import load_automation_observable_sources
+from ..sources.automation import load_external_source_names, load_filtered_observable_sources
 from .prepare import prepare_manifest_if_missing
 from .translator import LubanDagsterDbtTranslator
 from .vars import _get_dbt_vars_for_context
@@ -165,7 +165,7 @@ def get_dbt_assets():
 
     prepare_manifest_if_missing()
     automation_observable_tables = {
-        spec["table"] for spec in load_automation_observable_sources() if spec.get("table")
+        spec["table"] for spec in load_filtered_observable_sources() if spec.get("table")
     }
 
     orch_cfg_path = resolve_orchestration_path(
@@ -222,10 +222,16 @@ def get_dbt_assets():
         partitions_by_model=orch_index.partitions_by_model,
     )
 
-    @dbt_assets(
-        manifest=dbt_project.manifest_path,
-        dagster_dbt_translator=translator,
-    )
+    dbt_assets_kwargs = {
+        "manifest": dbt_project.manifest_path,
+        "dagster_dbt_translator": translator,
+    }
+    external_source_names = load_external_source_names()
+    if external_source_names:
+        exclude_parts = [f"source:{src}" for src in sorted(external_source_names)]
+        dbt_assets_kwargs["exclude"] = " ".join(exclude_parts)
+
+    @dbt_assets(**dbt_assets_kwargs)
     def _dbt_assets(context, dbt: DbtCliResource):
         retry_number = int(getattr(context, "retry_number", 0) or 0)
         tx_span_name, _, tx_attrs = otel_dagster_transaction_info(context)

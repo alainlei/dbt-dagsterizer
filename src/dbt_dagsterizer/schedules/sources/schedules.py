@@ -29,9 +29,9 @@ def _get_global_timezone() -> str:
 
 
 def get_observe_sources_schedule():
-    from ...assets.sources.automation import load_automation_observable_sources
+    from ...assets.sources.automation import load_filtered_observable_sources
 
-    if not load_automation_observable_sources():
+    if not load_filtered_observable_sources():
         return None
     return ScheduleDefinition(
         name="observe_sources_schedule",

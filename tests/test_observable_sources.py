@@ -426,3 +426,163 @@ def test_build_observable_source_assets_resolves_key_via_dbt_name(monkeypatch):
     assert decorator_kwargs["key"] == dg.AssetKey(["mssqlserver", "testing"])
     # SQL query uses the identifier "Test" for the actual table reference
     assert queries == ["select max(`updated_at`) from `mssqlserver`.`Test`"]
+
+
+# ---------------------------------------------------------------------------
+# load_external_source_names  /  _is_luban_external
+# ---------------------------------------------------------------------------
+
+
+def test_is_luban_external_code_location_true():
+    from dbt_dagsterizer.assets.sources.automation import _is_luban_external_code_location
+
+    assert _is_luban_external_code_location({"luban": {"external_code_location": True}}) is True
+
+
+def test_is_luban_external_code_location_false():
+    from dbt_dagsterizer.assets.sources.automation import _is_luban_external_code_location
+
+    assert _is_luban_external_code_location({"luban": {"external_code_location": False}}) is False
+    assert _is_luban_external_code_location({"luban": {}}) is False
+    assert _is_luban_external_code_location({}) is False
+    assert _is_luban_external_code_location(None) is False
+    assert _is_luban_external_code_location("not a dict") is False
+
+
+def test_load_external_source_names_source_level(monkeypatch, tmp_path: Path):
+    """meta.luban.external_code_location on the source propagates via source_meta."""
+    from dbt_dagsterizer.assets.sources import automation
+
+    manifest = {
+        "sources": {
+            "source.ext_db.mkt_ext": {
+                "source_name": "ext_db",
+                "name": "mkt_ext",
+                "meta": {},
+                "source_meta": {"luban": {"external_code_location": True}},
+            },
+            "source.ext_db.other_table": {
+                "source_name": "ext_db",
+                "name": "other_table",
+                "meta": {},
+                "source_meta": {"luban": {"external_code_location": True}},
+            },
+            "source.local.orders": {
+                "source_name": "local",
+                "name": "orders",
+                "meta": {},
+                "source_meta": {},
+            },
+        }
+    }
+
+    target_dir = tmp_path / "target"
+    target_dir.mkdir()
+    (target_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    monkeypatch.setattr(automation, "prepare_manifest_if_missing", lambda: None)
+    monkeypatch.setattr(automation, "get_dbt_project_dir", lambda: tmp_path)
+
+    assert automation.load_external_source_names() == {"ext_db"}
+
+
+def test_load_external_source_names_table_level(monkeypatch, tmp_path: Path):
+    """meta.luban.external_code_location on a single table only."""
+    from dbt_dagsterizer.assets.sources import automation
+
+    manifest = {
+        "sources": {
+            "source.mydb.ext_table": {
+                "source_name": "mydb",
+                "name": "ext_table",
+                "meta": {"luban": {"external_code_location": True}},
+                "source_meta": {},
+            },
+            "source.mydb.local_table": {
+                "source_name": "mydb",
+                "name": "local_table",
+                "meta": {},
+                "source_meta": {},
+            },
+        }
+    }
+
+    target_dir = tmp_path / "target"
+    target_dir.mkdir()
+    (target_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    monkeypatch.setattr(automation, "prepare_manifest_if_missing", lambda: None)
+    monkeypatch.setattr(automation, "get_dbt_project_dir", lambda: tmp_path)
+
+    assert automation.load_external_source_names() == {"mydb"}
+
+
+def test_load_external_source_names_empty(monkeypatch, tmp_path: Path):
+    """No external flag anywhere — returns empty set."""
+    from dbt_dagsterizer.assets.sources import automation
+
+    manifest = {
+        "sources": {
+            "source.local.orders": {
+                "source_name": "local",
+                "name": "orders",
+                "meta": {},
+                "source_meta": {},
+            },
+        }
+    }
+
+    target_dir = tmp_path / "target"
+    target_dir.mkdir()
+    (target_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    monkeypatch.setattr(automation, "prepare_manifest_if_missing", lambda: None)
+    monkeypatch.setattr(automation, "get_dbt_project_dir", lambda: tmp_path)
+
+    assert automation.load_external_source_names() == set()
+
+
+def test_load_filtered_observable_sources_excludes_external(
+    monkeypatch, tmp_path: Path
+):
+    """Observable sources flagged external_code_location are filtered out."""
+    from dbt_dagsterizer.assets.sources import automation
+
+    manifest = {
+        "sources": {
+            "source.ext_db.mkt_ext": {
+                "source_name": "ext_db",
+                "name": "mkt_ext",
+                "meta": {
+                    "luban": {
+                        "external_code_location": True,
+                        "observe": {"watermark_column": "updated_at"},
+                    }
+                },
+                "source_meta": {},
+            },
+            "source.local.orders": {
+                "source_name": "local",
+                "name": "orders",
+                "meta": {
+                    "luban": {
+                        "observe": {"watermark_column": "updated_at"},
+                    }
+                },
+                "source_meta": {},
+            },
+        }
+    }
+
+    target_dir = tmp_path / "target"
+    target_dir.mkdir()
+    (target_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    monkeypatch.setattr(automation, "prepare_manifest_if_missing", lambda: None)
+    monkeypatch.setattr(automation, "get_dbt_project_dir", lambda: tmp_path)
+
+    result = automation.load_filtered_observable_sources()
+    # ext_db.mkt_ext is external — only local.orders should remain
+    assert len(result) == 1
+    assert result[0]["source"] == "local"
+    assert result[0]["table"] == "orders"

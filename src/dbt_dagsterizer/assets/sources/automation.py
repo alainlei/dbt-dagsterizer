@@ -73,3 +73,54 @@ def load_automation_observable_sources() -> list[dict[str, str | None]]:
         )
 
     return sorted(specs, key=lambda s: (s["source"], s["table"]))
+
+
+def _is_luban_external_code_location(meta_value: Any) -> bool:
+    """Return True when the meta dict contains ``luban.external_code_location: true``."""
+    if not isinstance(meta_value, dict):
+        return False
+    luban = meta_value.get("luban")
+    if not isinstance(luban, dict):
+        return False
+    return bool(luban.get("external_code_location"))
+
+
+def load_external_source_names() -> set[str]:
+    """Scan the dbt manifest for sources marked ``meta.luban.external_code_location: true``.
+
+    Both table-level ``meta`` and source-level ``source_meta`` are checked
+    (table-level wins, source-level is the fallback — same cascade used by
+    ``_extract_group_from_meta``).  Returns the set of dbt ``source_name``
+    values whose tables carry the external flag.
+    """
+    prepare_manifest_if_missing()
+    with _manifest_path().open("r", encoding="utf-8") as f:
+        manifest = json.load(f)
+
+    external_code_location_names: set[str] = set()
+    for props in (manifest.get("sources") or {}).values():
+        if not isinstance(props, dict):
+            continue
+        # Table-level meta wins; fall back to source-level source_meta
+        if _is_luban_external_code_location(props.get("meta")) or _is_luban_external_code_location(
+            props.get("source_meta")
+        ):
+            source_name = props.get("source_name")
+            if source_name:
+                external_code_location_names.add(str(source_name))
+    return external_code_location_names
+
+
+def load_filtered_observable_sources() -> list[dict[str, str | None]]:
+    """Load observable source specs, excluding sources owned by other code locations.
+
+    Scans the dbt manifest for sources marked ``meta.luban.external: true``
+    and filters them out.  This prevents duplicate asset definitions when two
+    code locations reference the same physical table (one as a model, the
+    other as a source).
+    """
+    all_specs = load_automation_observable_sources()
+    external_names = load_external_source_names()
+    if not external_names:
+        return all_specs
+    return [s for s in all_specs if s.get("source") not in external_names]
