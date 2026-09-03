@@ -73,7 +73,7 @@ def test_observe_sources_job_injects_tags(monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setattr("dbt_dagsterizer.assets.dbt.assets.get_dbt_assets", lambda: None)
     monkeypatch.setattr(
-        "dbt_dagsterizer.assets.sources.automation.load_automation_observable_sources",
+        "dbt_dagsterizer.assets.sources.automation.load_filtered_observable_sources",
         lambda: [{"source": "ods", "table": "orders", "watermark_column": "updated_at"}],
     )
     monkeypatch.setattr(
