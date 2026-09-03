@@ -54,4 +54,5 @@ Code locations often need to import successfully even before the dbt project is 
 - Execution model and env propagation: `execution-model.md`
 - Observability (OpenTelemetry + Elastic APM): [../observability.md](../observability.md)
 - dagsterization.yml: `dagsterization-yml.md`
+- sources.yml `meta.luban` reference: `sources-yml.md`
 - model.sql: `dbt-models.md`
