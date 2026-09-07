@@ -7,6 +7,48 @@ These notes are intended to be a polished companion to `CHANGELOG.md`:
 - `CHANGELOG.md` remains the cumulative project history.
 - This document provides concise, version-by-version release summaries that are easy to reuse for GitHub Releases and upgrade communication.
 
+## v0.5.3
+
+Release date: 2026-09-08
+
+### Summary
+
+`v0.5.3` is the largest feature release since `v0.5.0`, delivering three big-ticket items: (1) **monthly partitions, schedules, and partition-change sensors** end-to-end at full parity with the existing daily and hourly strategies, including validation, preset functions, CLI metadata commands, and an end-to-end integration test over a monthly-replicated model (the exact configuration that used to crash the definitions build); (2) **external-source ownership moved out of dagsterization.yml into dbt sources.yml** via `meta.luban.external_code_location: true`, with per-table pair tracking so marking one table as external no longer accidentally excludes its siblings under the same source group; (3) **timezone now round-trippable through the new `meta timezone` CLI command and inherited by daily/hourly/monthly partitions and schedules**. Three correctness fixes landed during review: (a) per-table external source pairs (above); (b) `dagster/row_count` total-table AssetObservation now correctly attaches to the emitting run's partition key (no longer racing on a global key); and (c) monthly replicated models no longer raise `Unsupported partition_type` at definitions-build time. A new concept doc at `docs/concepts/sources-yml.md` documents the full `meta.luban.*` source namespace.
+
+### Added
+
+- **Monthly partitions end-to-end at parity with daily/hourly:**
+  - New `monthly` partition type in `dagsterization.yml` under `partitions.monthly`; partition keys are `YYYY-MM-01`, driven by env `DAGSTER_MONTHLY_PARTITIONS_START_DATE` (format `YYYY-MM-DD`).
+  - New `partitions.monthly_config.include_current_month_partition` boolean (default `true`) controlling whether the still-running month is exposed; set to `false` for end-of-month materialization pipelines where only the just-closed month should be materialized.
+  - New `monthly_at` schedule type with `day_of_month` (validated `1..28` — never silently skipped in short months such as February), `hour`, `minute`, `lookback_months`, `offset_months` (default `1`, so a schedule firing on calendar day 1 targets the month that just closed).
+  - New `monthly_at()` schedule preset alongside `daily_at()`/`hourly_at()` in `schedules/dbt/presets.py`.
+  - Monthly partition-change sensor with `granularity="month"` watermark grouper via `date_trunc('month', …)` and month-granular impact range expansion (`start_offset_months` / `end_offset_months`), plus wrong-granularity offset rejection: `day` offsets on a monthly detector previously produced invalid mid-month keys such as `2026-03-15` that would have failed the `RunRequest` at sensor tick — they now raise validation errors early.
+  - CLI commands: `meta monthly-config`, `meta partition --type monthly`, `meta job --partitions monthly`, `meta schedule --schedule-type monthly_at` with `--day-of-month / --lookback-months / --offset-months`, and `meta partition-change detector --lookback-months / --offset-months`.
+  - New `meta timezone` CLI command sets and validates the code location's execution timezone (IANA tz name, defaults to `UTC`), propagated into daily/hourly/monthly partition definitions and schedules.
+  - `meta partition-config` (daily) and `meta hourly-config` CLI commands now exist (previously required manual YAML edits).
+  - Test coverage: 8 new test modules covering monthly partition definitions + env var enforcement, `monthly_at` preset/validation/cron, monthly schedule factory partition keys including year rollover, monthly partition-change sensor watermark dedupe + month-based impact ranges + generated SQL, timezone inheritance, CLI round-trips, `meta timezone`, and a full `build_definitions` load test over a monthly-partitioned replicated model (`tests/test_integration_monthly.py`, 153 lines).
+- **External source ownership declared in dbt sources.yml meta.** Set `meta.luban.external_code_location: true` on the specific table (table-level `meta` wins) or on the source itself (source-level `source_meta` fallback covers every table under that source entry). Detected sources are excluded from both (1) observable-source asset generation via `load_filtered_observable_sources()` and (2) the `@dbt_assets` graph via `exclude=source:<src>.<name>` dbt selectors. Tracking is per-table `(source_name, dbt_name)` pairs, so marking one table as external never accidentally excludes shared-source siblings.
+- **New concept doc `docs/concepts/sources-yml.md`** documents the full `meta.luban.*` namespace for dbt sources: `observe.watermark_column`, `observe.watermark_sql`, new `meta.luban.group`, and new `meta.luban.external_code_location`.
+
+### Fixed
+
+- **Monthly replicated models no longer crash the definitions build.** `schedules/replication/factory.py` used to raise `Unsupported partition_type` at definitions-build time whenever a monthly-partitioned model had replication enabled (the auto-config path threads `partition_type` directly through from `partitions_by_model`). The factory now handles monthly and emits `YYYY-MM-01` keys; the auto-generated replication cron for monthly models is `30 0 1 * *` (00:30 on calendar day 1), matching the existing daily `30 0 * * *` analogue so together with default `offset_months=1` it replicates the month that just closed.
+- **Per-table external source pair tracking stops sibling exclusion.** The PR #11 implementation used a `set[str]` of whole source names and collapsed every table under a shared dbt source whenever any single one was flagged external. `load_external_source_names()` now returns per-table `(source_name, dbt_name)` pairs; `load_filtered_observable_sources()` filters by that pair; `@dbt_assets exclude=` uses `source:<src>.<name>` per-table selectors. Unit tests updated accordingly.
+- **Row-count `AssetObservation` partition is now scoped to the emitting run's partition key.** `_emit_partition_row_counts()` yielded two sequential observations: the first (`last_run_affected_row_count`) carried `partition=partition_key` but the second (`dagster/row_count`) did not, so metadata snapshots from parallel partition runs raced on one global key. Both observations now carry the same `partition=` parameter, so the Dagster UI Partitions tab displays row-count metadata for each specific partition rather than a last-write-wins global.
+
+### Changed
+
+- `dagsterization.yml` OrchestrationIndex **removed the older `external_asset_sources` field entirely;** ownership declaration now lives in dbt sources.yml (see Added above).
+- Detector partition-type derivation is intentionally narrow — only models explicitly listed under `partitions.monthly` get a month-granular detector. Hourly and unpartitioned models remain on the daily-granular detector behavior (widening this to hourly → hourly detector type would be a regression via the detector's `Unsupported partition_type` raise).
+- CLI `meta schedule` validation now accepts `--day-of-month / --lookback-months / --offset-months` ONLY when `schedule_type == "monthly_at"` and rejects them otherwise, mirroring the cross-granularity guards already in place for daily/hourly.
+
+### Upgrade Notes
+
+- `DAGSTER_MONTHLY_PARTITIONS_START_DATE` env var is **required** whenever any model uses the new `monthly` partition type. Format `YYYY-MM-DD` (e.g. `2024-01-01`).
+- **Migration for `external_asset_sources`:** delete any existing `orchestration.external_asset_sources:` entry from `dagsterization.yml` and instead add `meta.luban.external_code_location: true` on the corresponding source entry or individual tables inside `dbt_project/models/sources.yml`. A source-level setting covers every table under that source entry; a table-level setting applies to that one table only.
+- `monthly_at` schedules require `day_of_month ∈ 1..28`. Cron silently skips days 29–31 in shorter calendar months (particularly February); the validation guard enforces `1..28` up front so you don't silently miss runs every 3/4 years.
+- Any monthly-partitioned replicated model that previously raised the uncaught `Unsupported partition_type` definitions-build error will work immediately after upgrading.
+
 ## v0.5.2
 
 Release date: 2026-08-21
