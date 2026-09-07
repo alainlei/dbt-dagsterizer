@@ -483,11 +483,15 @@ def test_load_external_source_names_source_level(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(automation, "prepare_manifest_if_missing", lambda: None)
     monkeypatch.setattr(automation, "get_dbt_project_dir", lambda: tmp_path)
 
-    assert automation.load_external_source_names() == {"ext_db"}
+    assert automation.load_external_source_names() == {
+        ("ext_db", "mkt_ext"),
+        ("ext_db", "other_table"),
+    }
 
 
 def test_load_external_source_names_table_level(monkeypatch, tmp_path: Path):
-    """meta.luban.external_code_location on a single table only."""
+    """meta.luban.external_code_location on a SINGLE table only — the sibling table
+    under the same source group MUST remain unmarked (per-table granularity)."""
     from dbt_dagsterizer.assets.sources import automation
 
     manifest = {
@@ -514,7 +518,8 @@ def test_load_external_source_names_table_level(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(automation, "prepare_manifest_if_missing", lambda: None)
     monkeypatch.setattr(automation, "get_dbt_project_dir", lambda: tmp_path)
 
-    assert automation.load_external_source_names() == {"mydb"}
+    # Only the explicitly-marked table pair; local_table stays in this code location
+    assert automation.load_external_source_names() == {("mydb", "ext_table")}
 
 
 def test_load_external_source_names_empty(monkeypatch, tmp_path: Path):

@@ -142,6 +142,7 @@ def _emit_partition_row_counts(
             yield dg.AssetObservation(
                 asset_key=asset_key,
                 metadata=metadata_total,
+                partition=partition_key,
             )
         
 
@@ -226,9 +227,12 @@ def get_dbt_assets():
         "manifest": dbt_project.manifest_path,
         "dagster_dbt_translator": translator,
     }
-    external_source_names = load_external_source_names()
-    if external_source_names:
-        exclude_parts = [f"source:{src}" for src in sorted(external_source_names)]
+    external_source_pairs = load_external_source_names()
+    if external_source_pairs:
+        exclude_parts = [
+            f"source:{src}.{name}"
+            for src, name in sorted(external_source_pairs)
+        ]
         dbt_assets_kwargs["exclude"] = " ".join(exclude_parts)
 
     @dbt_assets(**dbt_assets_kwargs)
