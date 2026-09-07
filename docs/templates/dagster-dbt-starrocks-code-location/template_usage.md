@@ -14,7 +14,7 @@ If you are developing the template itself, the template source is embedded in `d
 Notes:
 
 - On startup, Dagster ensures `dbt_project/target/manifest.json` exists by running `dbt parse` if needed (and runs `dbt deps` when `packages.yml` contains packages). Control this via `LUBAN_DBT_PREPARE_ON_LOAD` (defaults to `1`).
-- The daily partitions start date is controlled by `DAGSTER_DAILY_PARTITIONS_START_DATE` and must be set when using daily partitions.
+- The daily partitions start date is controlled by `DAGSTER_DAILY_PARTITIONS_START_DATE` and must be set when using daily partitions. Monthly partitions use `DAGSTER_MONTHLY_PARTITIONS_START_DATE` (format `YYYY-MM-DD`), and hourly partitions use `DAGSTER_HOURLY_PARTITIONS_START_DATE`.
 - The dbt models in this template expect to run in Dagster partitioned mode and will fail fast at execution time if required dbt vars are missing.
 - For partitioned runs, Dagster passes dbt variables `min_date`/`max_date` and `min_datetime`/`max_datetime` based on the partition time window.
 - In this template, `dbt_project/dagsterization.yml` partitioning (`daily`) means "Dagster orchestration partitioning" (processing slices / rebuild scope). It does not imply StarRocks physical table partitioning.

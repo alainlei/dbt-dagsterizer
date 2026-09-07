@@ -38,6 +38,9 @@ from ..orchestration_config import (
     set_hourly_config as orch_set_hourly_config,
 )
 from ..orchestration_config import (
+    set_monthly_config as orch_set_monthly_config,
+)
+from ..orchestration_config import (
     set_partition as orch_set_partition,
 )
 from ..orchestration_config import (
@@ -101,7 +104,7 @@ def build_meta_group() -> click.Group:
     @click.option("--tag", "tag_", default="", help="Select models by existing dbt tag")
     @click.option("--name", "job_name", required=True)
     @click.option("--include-upstream/--no-include-upstream", default=False, show_default=True)
-    @click.option("--partitions", default="", help="daily|hourly|unpartitioned|none")
+    @click.option("--partitions", default="", help="daily|hourly|monthly|unpartitioned|none")
     @click.option("--prepare/--no-prepare", default=True, show_default=True)
     @click.option("--parse/--no-parse", default=False, show_default=True)
     def meta_job(
@@ -130,8 +133,14 @@ def build_meta_group() -> click.Group:
             raise click.ClickException("No models selected (use --models or --tag)")
 
         partitions_value = partitions.strip().lower() or None
-        if partitions_value is not None and partitions_value not in {"daily", "hourly", "unpartitioned", "none"}:
-            raise click.ClickException("--partitions must be one of daily|hourly|unpartitioned|none")
+        if partitions_value is not None and partitions_value not in {
+            "daily",
+            "hourly",
+            "monthly",
+            "unpartitioned",
+            "none",
+        }:
+            raise click.ClickException("--partitions must be one of daily|hourly|monthly|unpartitioned|none")
         job_partitions = None if partitions_value in {None, "none"} else partitions_value
 
         target = orchestration_path(dbt_project_dir=dbt_project_path, path_=path_)
@@ -239,7 +248,7 @@ def build_meta_group() -> click.Group:
     @click.option("--path", "path_", default="dagsterization.yml", show_default=True)
     @click.option("--models", default="", help="Comma-separated model names")
     @click.option("--tag", "tag_", default="", help="Select models by existing dbt tag")
-    @click.option("--type", "partition_type", required=True, help="daily|hourly|unpartitioned")
+    @click.option("--type", "partition_type", required=True, help="daily|hourly|monthly|unpartitioned")
     @click.option("--prepare/--no-prepare", default=True, show_default=True)
     @click.option("--parse/--no-parse", default=False, show_default=True)
     def meta_partition(
@@ -252,8 +261,8 @@ def build_meta_group() -> click.Group:
         parse: bool,
     ) -> None:
         # Handle partition type
-        if partition_type not in {"daily", "hourly", "unpartitioned"}:
-            raise click.ClickException("--type must be one of daily|hourly|unpartitioned")
+        if partition_type not in {"daily", "hourly", "monthly", "unpartitioned"}:
+            raise click.ClickException("--type must be one of daily|hourly|monthly|unpartitioned")
         partition_value = partition_type
 
         dbt_project_path = resolve_dir_arg(dbt_project_dir)
@@ -379,13 +388,16 @@ def build_meta_group() -> click.Group:
     @click.option("--models", default="", help="Comma-separated model names")
     @click.option("--tag", "tag_", default="", help="Select models by existing dbt tag")
     @click.option("--name", required=True)
-    @click.option("--hour", type=int, default=_HOUR_UNSET, help="Required for --schedule-type daily_at; optional for hourly_at (default 0). Valid 0..23")
+    @click.option("--hour", type=int, default=_HOUR_UNSET, help="Required for --schedule-type daily_at and monthly_at; optional for hourly_at (default 0). Valid 0..23")
     @click.option("--minute", type=int, required=True)
     @click.option("--lookback-days", type=int, default=0, show_default=True)
     @click.option("--offset-days", type=int, default=1, show_default=True)
     @click.option("--lookback-hours", type=int, default=0, show_default=True)
     @click.option("--offset-hours", type=int, default=1, show_default=True)
-    @click.option("--schedule-type", type=click.Choice(["daily_at", "hourly_at"]), default="daily_at", show_default=True)
+    @click.option("--day-of-month", type=int, default=1, show_default=True, help="For monthly_at. Valid 1..28")
+    @click.option("--lookback-months", type=int, default=0, show_default=True)
+    @click.option("--offset-months", type=int, default=1, show_default=True)
+    @click.option("--schedule-type", type=click.Choice(["daily_at", "hourly_at", "monthly_at"]), default="daily_at", show_default=True)
     @click.option("--enabled/--disabled", default=True, show_default=True)
     @click.option("--prepare/--no-prepare", default=True, show_default=True)
     @click.option("--parse/--no-parse", default=False, show_default=True)
@@ -401,13 +413,16 @@ def build_meta_group() -> click.Group:
         offset_days: int,
         lookback_hours: int,
         offset_hours: int,
+        day_of_month: int,
+        lookback_months: int,
+        offset_months: int,
         schedule_type: str,
         enabled: bool,
         prepare: bool,
         parse: bool,
     ) -> None:
-        if schedule_type == "daily_at" and hour == _HOUR_UNSET:
-            raise click.ClickException("--hour is required when --schedule-type is daily_at")
+        if schedule_type in {"daily_at", "monthly_at"} and hour == _HOUR_UNSET:
+            raise click.ClickException(f"--hour is required when --schedule-type is {schedule_type}")
         if schedule_type == "hourly_at" and hour == _HOUR_UNSET:
             hour = 0
         if hour < 0 or hour > 23:
@@ -422,6 +437,13 @@ def build_meta_group() -> click.Group:
             raise click.ClickException("--lookback-hours must be >= 0")
         if offset_hours < 0:
             raise click.ClickException("--offset-hours must be >= 0")
+        # cron never fires on a 29th-31st during a shorter month, so the schedule would silently stall.
+        if day_of_month < 1 or day_of_month > 28:
+            raise click.ClickException("--day-of-month must be 1..28")
+        if lookback_months < 0:
+            raise click.ClickException("--lookback-months must be >= 0")
+        if offset_months < 0:
+            raise click.ClickException("--offset-months must be >= 0")
 
         dbt_project_path = resolve_dir_arg(dbt_project_dir)
         if not dbt_project_path.exists():
@@ -457,6 +479,9 @@ def build_meta_group() -> click.Group:
             offset_days=offset_days,
             lookback_hours=lookback_hours,
             offset_hours=offset_hours,
+            day_of_month=day_of_month,
+            lookback_months=lookback_months,
+            offset_months=offset_months,
             enabled=enabled,
         )
         save_orchestration_with_validation(target=target, data=data, dbt_project_dir=dbt_project_path, prepare=prepare)
@@ -481,6 +506,8 @@ def build_meta_group() -> click.Group:
     @click.option("--updated-at-expr", required=True)
     @click.option("--lookback-days", type=int, default=0, show_default=True)
     @click.option("--offset-days", type=int, default=0, show_default=True)
+    @click.option("--lookback-months", type=int, default=None, help="For monthly models; takes precedence over --lookback-days")
+    @click.option("--offset-months", type=int, default=None, help="For monthly models; takes precedence over --offset-days")
     @click.option("--minimum-interval-seconds", type=int, default=60, show_default=True)
     @click.option("--prepare/--no-prepare", default=True, show_default=True)
     @click.option("--parse/--no-parse", default=False, show_default=True)
@@ -497,6 +524,8 @@ def build_meta_group() -> click.Group:
         updated_at_expr: str,
         lookback_days: int,
         offset_days: int,
+        lookback_months: int | None,
+        offset_months: int | None,
         minimum_interval_seconds: int,
         prepare: bool,
         parse: bool,
@@ -505,6 +534,10 @@ def build_meta_group() -> click.Group:
             raise click.ClickException("--lookback-days must be >= 0")
         if offset_days < 0:
             raise click.ClickException("--offset-days must be >= 0")
+        if lookback_months is not None and lookback_months < 0:
+            raise click.ClickException("--lookback-months must be >= 0")
+        if offset_months is not None and offset_months < 0:
+            raise click.ClickException("--offset-months must be >= 0")
         if minimum_interval_seconds <= 0:
             raise click.ClickException("--minimum-interval-seconds must be > 0")
         if bool(detect_relation.strip()) == bool(detect_source.strip()):
@@ -538,6 +571,8 @@ def build_meta_group() -> click.Group:
             updated_at_expr=updated_at_expr,
             lookback_days=lookback_days,
             offset_days=offset_days,
+            lookback_months=lookback_months,
+            offset_months=offset_months,
             minimum_interval_seconds=minimum_interval_seconds,
         )
         save_orchestration_with_validation(target=target, data=data, dbt_project_dir=dbt_project_path, prepare=prepare)
@@ -787,6 +822,37 @@ def build_meta_group() -> click.Group:
         target = orchestration_path(dbt_project_dir=dbt_project_path, path_=path_)
         data = load_orch(target)
         orch_set_hourly_config(data=data, include_current_hour_partition=include_current_hour_partition)
+        save_orchestration_with_validation(
+            target=target,
+            data=data,
+            dbt_project_dir=dbt_project_path,
+            prepare=prepare,
+        )
+        click.echo(str(target))
+
+    @meta.command("monthly-config")
+    @click.option("--dbt-project-dir", default="./dbt_project", show_default=True)
+    @click.option("--path", "path_", default="dagsterization.yml", show_default=True)
+    @click.option(
+        "--include-current-month-partition/--no-include-current-month-partition",
+        default=None,
+        help="Include the in-progress month's partition in MonthlyPartitionsDefinition",
+    )
+    @click.option("--prepare/--no-prepare", default=True, show_default=True)
+    def meta_monthly_config(
+        dbt_project_dir: str,
+        path_: str,
+        include_current_month_partition: bool | None,
+        prepare: bool,
+    ) -> None:
+        """Configure monthly partition definition parameters."""
+        dbt_project_path = resolve_dir_arg(dbt_project_dir)
+        if not dbt_project_path.exists():
+            raise click.ClickException(f"dbt project dir does not exist: {dbt_project_path}")
+
+        target = orchestration_path(dbt_project_dir=dbt_project_path, path_=path_)
+        data = load_orch(target)
+        orch_set_monthly_config(data=data, include_current_month_partition=include_current_month_partition)
         save_orchestration_with_validation(
             target=target,
             data=data,

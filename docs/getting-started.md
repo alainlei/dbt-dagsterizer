@@ -117,9 +117,11 @@ If the project has no dbt models yet (no `models/**/*.sql`), `build_definitions(
 
 ## Partitioning prerequisite
 
-If you configure any model/job as `daily` partitioned (for example via `dbt_project/dagsterization.yml`), set:
+If you configure any model/job as `daily`, `hourly`, or `monthly` partitioned (for example via `dbt_project/dagsterization.yml`), set the matching start date:
 
 - `DAGSTER_DAILY_PARTITIONS_START_DATE` (format `YYYY-MM-DD`)
+- `DAGSTER_HOURLY_PARTITIONS_START_DATE` (format `YYYY-MM-DD-HH:MM`, optionally with a timezone offset such as `+08:00`)
+- `DAGSTER_MONTHLY_PARTITIONS_START_DATE` (format `YYYY-MM-DD`)
 
 ## Next reads
 

@@ -15,7 +15,7 @@ from ...orchestration_config import (
     load_or_create as load_orch,
 )
 from ...resources.dbt import get_dbt_project_dir
-from .presets import daily_at, hourly_at
+from .presets import daily_at, hourly_at, monthly_at
 
 
 def build_auto_dbt_schedule_specs() -> list[dict]:
@@ -75,6 +75,27 @@ def build_auto_dbt_schedule_specs() -> list[dict]:
                         minute=minute,
                         lookback_hours=lookback_hours,
                         offset_hours=offset_hours,
+                        enabled=enabled,
+                        timezone=global_timezone,
+                    )
+                )
+                continue
+
+            if schedule_type == "monthly_at":
+                hour = int(schedule_meta.get("hour", 0))
+                minute = int(schedule_meta.get("minute", 0))
+                day_of_month = int(schedule_meta.get("day_of_month", 1))
+                lookback_months = int(schedule_meta.get("lookback_months", 0))
+                offset_months = int(schedule_meta.get("offset_months", 1))
+                specs.append(
+                    monthly_at(
+                        name=str(name),
+                        job_name=str(job_name),
+                        hour=hour,
+                        minute=minute,
+                        day_of_month=day_of_month,
+                        lookback_months=lookback_months,
+                        offset_months=offset_months,
                         enabled=enabled,
                         timezone=global_timezone,
                     )

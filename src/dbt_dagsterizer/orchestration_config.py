@@ -158,11 +158,12 @@ def _ensure_list(parent: MutableMapping[str, Any], key: str) -> list[Any]:
 
 @dataclass(frozen=True)
 class OrchestrationIndex:
-    partitions_by_model: dict[str, str]  # model -> "daily"|"hourly"|"unpartitioned"
+    partitions_by_model: dict[str, str]  # model -> "daily"|"hourly"|"monthly"|"unpartitioned"
     asset_job_models: set[str]
     group_job_by_model: dict[str, str]
     daily_include_current_day_partition: bool = True  # DailyPartitionsDefinition end_offset from daily_config (true -> end_offset=1)
     hourly_include_current_hour_partition: bool = True  # HourlyPartitionsDefinition end_offset from hourly_config (true -> end_offset=1)
+    monthly_include_current_month_partition: bool = True  # MonthlyPartitionsDefinition end_offset from monthly_config (true -> end_offset=1)
     timezone: str = "UTC"  # Global schedule execution timezone
     replication_enabled: bool = False
     replication_entries: dict[str, ReplicationEntry] = field(default_factory=dict)  # model_name -> config
@@ -177,7 +178,7 @@ def index(data: Mapping[str, Any]) -> OrchestrationIndex:
         for p_type, models in partitions.items():
             if not isinstance(p_type, str):
                 continue
-            if p_type in {"daily", "hourly", "unpartitioned"}:
+            if p_type in {"daily", "hourly", "monthly", "unpartitioned"}:
                 if not isinstance(models, list):
                     continue
                 for m in models:
@@ -205,6 +206,17 @@ def index(data: Mapping[str, Any]) -> OrchestrationIndex:
                 if not isinstance(raw_include_current_hour_partition, bool):
                     raise ValueError("partitions.hourly_config.include_current_hour_partition must be a boolean")
                 hourly_include_current_hour_partition = raw_include_current_hour_partition
+
+    # Parse monthly partition config (defaults to True when not explicitly set)
+    monthly_include_current_month_partition = True
+    if isinstance(partitions, Mapping):
+        monthly_config = partitions.get("monthly_config")
+        if isinstance(monthly_config, Mapping):
+            raw_include_current_month_partition = monthly_config.get("include_current_month_partition")
+            if raw_include_current_month_partition is not None:
+                if not isinstance(raw_include_current_month_partition, bool):
+                    raise ValueError("partitions.monthly_config.include_current_month_partition must be a boolean")
+                monthly_include_current_month_partition = raw_include_current_month_partition
 
     asset_job_models: set[str] = set()
     asset_jobs = data.get("asset_jobs")
@@ -275,6 +287,7 @@ def index(data: Mapping[str, Any]) -> OrchestrationIndex:
         group_job_by_model=group_job_by_model,
         daily_include_current_day_partition=daily_include_current_day_partition,
         hourly_include_current_hour_partition=hourly_include_current_hour_partition,
+        monthly_include_current_month_partition=monthly_include_current_month_partition,
         timezone=timezone,
         replication_enabled=replication_enabled,
         replication_entries=replication_entries,
@@ -331,13 +344,33 @@ def set_hourly_config(
         hourly_config["include_current_hour_partition"] = bool(include_current_hour_partition)
 
 
+def set_monthly_config(
+    *,
+    data: MutableMapping[str, Any],
+    include_current_month_partition: bool | None = None,
+) -> None:
+    """Set monthly partition configuration.
+
+    Args:
+        data: Orchestration config dict
+        include_current_month_partition: Whether the current month's partition should be available
+    """
+    partitions = _ensure_mapping(data, "partitions")
+    if include_current_month_partition is not None:
+        monthly_config = partitions.get("monthly_config")
+        if not isinstance(monthly_config, MutableMapping):
+            partitions["monthly_config"] = {}
+            monthly_config = partitions["monthly_config"]
+        monthly_config["include_current_month_partition"] = bool(include_current_month_partition)
+
+
 def set_partition(*, data: MutableMapping[str, Any], model: str, partition: str | None) -> None:
     """Set partition for a model.
     
     Args:
         data: Orchestration config dict
         model: Model name
-        partition: Partition spec ("daily", "hourly", "unpartitioned", or None)
+        partition: Partition spec ("daily", "hourly", "monthly", "unpartitioned", or None)
     """
     model = model.strip()
     if not model:
@@ -345,8 +378,8 @@ def set_partition(*, data: MutableMapping[str, Any], model: str, partition: str 
 
     partitions = _ensure_mapping(data, "partitions")
     
-    # Remove model from all partition assignments (daily, hourly, and unpartitioned)
-    for p_type in ["daily", "hourly", "unpartitioned"]:
+    # Remove model from all partition assignments (daily, hourly, monthly, and unpartitioned)
+    for p_type in ["daily", "hourly", "monthly", "unpartitioned"]:
         models = partitions.get(p_type)
         if isinstance(models, list):
             partitions[p_type] = [m for m in models if not (isinstance(m, str) and m.strip() == model)]
@@ -355,8 +388,8 @@ def set_partition(*, data: MutableMapping[str, Any], model: str, partition: str 
         return
     
     # Validate partition spec
-    if partition not in {"daily", "hourly", "unpartitioned"}:
-        raise ValueError("partition must be one of daily|hourly|unpartitioned")
+    if partition not in {"daily", "hourly", "monthly", "unpartitioned"}:
+        raise ValueError("partition must be one of daily|hourly|monthly|unpartitioned")
 
     # Add to the appropriate partition list
     models = partitions.get(partition)
@@ -402,8 +435,8 @@ def set_group_job(
     if partitions is None:
         job.pop("partitions", None)
     else:
-        if partitions not in {"daily", "hourly", "unpartitioned"}:
-            raise ValueError("partitions must be one of daily|hourly|unpartitioned")
+        if partitions not in {"daily", "hourly", "monthly", "unpartitioned"}:
+            raise ValueError("partitions must be one of daily|hourly|monthly|unpartitioned")
         job["partitions"] = partitions
 
 
@@ -433,6 +466,9 @@ def set_schedule(
     enabled: bool,
     lookback_hours: int = 0,
     offset_hours: int = 1,
+    day_of_month: int = 1,
+    lookback_months: int = 0,
+    offset_months: int = 1,
 ) -> None:
     name = name.strip()
     if not name:
@@ -440,8 +476,8 @@ def set_schedule(
     job_name = job_name.strip()
     if not job_name:
         raise ValueError("schedule job_name must be non-empty")
-    if schedule_type not in {"daily_at", "hourly_at"}:
-        raise ValueError("schedule type must be 'daily_at' or 'hourly_at'")
+    if schedule_type not in {"daily_at", "hourly_at", "monthly_at"}:
+        raise ValueError("schedule type must be 'daily_at', 'hourly_at' or 'monthly_at'")
 
     schedules = _ensure_mapping(data, "schedules")
     entry: dict[str, Any] = {
@@ -457,6 +493,10 @@ def set_schedule(
     elif schedule_type == "hourly_at":
         entry["lookback_hours"] = int(lookback_hours)
         entry["offset_hours"] = int(offset_hours)
+    elif schedule_type == "monthly_at":
+        entry["day_of_month"] = int(day_of_month)
+        entry["lookback_months"] = int(lookback_months)
+        entry["offset_months"] = int(offset_months)
     schedules[name] = entry
 
 
@@ -471,9 +511,11 @@ def set_partition_change_detector(
     detect_source: dict[str, str] | None,
     partition_date_expr: str,
     updated_at_expr: str,
-    lookback_days: int,
-    offset_days: int,
+    lookback_days: int | None,
+    offset_days: int | None,
     minimum_interval_seconds: int,
+    lookback_months: int | None = None,
+    offset_months: int | None = None,
 ) -> None:
     model = model.strip()
     if not model:
@@ -494,10 +536,15 @@ def set_partition_change_detector(
         "enabled": bool(enabled),
         "partition_date_expr": partition_date_expr,
         "updated_at_expr": updated_at_expr,
-        "lookback_days": int(lookback_days),
-        "offset_days": int(offset_days),
-        "minimum_interval_seconds": int(minimum_interval_seconds),
     }
+    # Month fields win over day fields: a monthly detector ignores lookback_days/offset_days.
+    if lookback_months is not None or offset_months is not None:
+        entry["lookback_months"] = int(lookback_months or 0)
+        entry["offset_months"] = 1 if offset_months is None else int(offset_months)
+    else:
+        entry["lookback_days"] = int(lookback_days)
+        entry["offset_days"] = int(offset_days)
+    entry["minimum_interval_seconds"] = int(minimum_interval_seconds)
     if name:
         entry["name"] = name
     if job_name:

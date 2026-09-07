@@ -34,7 +34,7 @@ def test_partition_change_sensor_uses_watermark_cursor_and_dedupes(monkeypatch):
     monkeypatch.setattr(
         factory,
         "parse_sparse_lookback_meta",
-        lambda meta, manifest: _Sparse(detect_relation="ods.orders"),
+        lambda meta, manifest, granularity="day": _Sparse(detect_relation="ods.orders"),
     )
 
     fixed_now = datetime(2026, 5, 18, 12, 0, 0, tzinfo=timezone.utc)

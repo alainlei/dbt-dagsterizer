@@ -656,6 +656,7 @@ dagster asset materialize --select <asset_key>
 ## See Also
 
 - [dagsterization.yml Reference](../../concepts/dagsterization-yml.md) - Configure partitioning and jobs
+- [sources.yml `meta.luban` Reference](../../concepts/sources-yml.md) - Source metadata configuration
 - [Developer Workflow](../../templates/dagster-dbt-starrocks-code-location/developer_workflow.md) - Orchestration workflow
 - [Template Usage](../../templates/dagster-dbt-starrocks-code-location/template_usage.md) - Template features
 - [dbt Documentation](https://docs.getdbt.com/docs/build/models) - Official dbt docs

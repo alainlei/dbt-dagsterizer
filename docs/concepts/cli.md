@@ -181,7 +181,7 @@ Selection:
 
 Flags:
 
-- `--partitions`: `daily|unpartitioned|none`
+- `--partitions`: `daily|hourly|monthly|unpartitioned|none` (`none` leaves the job's partitions unset)
 - `--prepare`: only used when selecting by `--tag` (needs the manifest)
 - `--parse`: run `dbt parse` after writing
 
@@ -202,8 +202,29 @@ dbt-dagsterizer meta schedule \
 
 Flags:
 
-- `--offset-days`: partition offset for `daily_at` schedules (`1` = yesterday, `0` = today)
+- `--schedule-type`: `daily_at` (default), `hourly_at` or `monthly_at`
+- `--hour`: required for `daily_at` and `monthly_at`; optional for `hourly_at` (defaults to `0`). Valid `0..23`
+- `--lookback-days` / `--offset-days`: partition window for `daily_at` (`--offset-days 1` = yesterday, `0` = today)
+- `--lookback-hours` / `--offset-hours`: partition window for `hourly_at` (`--offset-hours 1` = previous hour)
+- `--day-of-month`: day the `monthly_at` schedule fires. Valid `1..28` (default `1`); higher values are rejected because cron never fires on a 29th-31st during a shorter month
+- `--lookback-months` / `--offset-months`: partition window for `monthly_at` (`--offset-months 1` = previous month, `0` = current month)
 - `--parse`: run `dbt parse` after writing
+
+Only the flags matching `--schedule-type` are written. `meta validate` rejects a schedule that mixes granularities, such as `offset_months` on a `daily_at` schedule.
+
+Monthly example:
+
+```bash
+dbt-dagsterizer meta schedule \
+  --models fact_revenue_monthly \
+  --name revenue_monthly_schedule \
+  --schedule-type monthly_at \
+  --day-of-month 1 \
+  --hour 4 \
+  --minute 0 \
+  --offset-months 1 \
+  --enabled
+```
 
 ### `meta timezone`
 
@@ -248,8 +269,24 @@ dbt-dagsterizer meta partition \
 
 Flags:
 
-- `--type`: `daily|unpartitioned|none` (`none` removes the model from `partitions.*`)
+- `--type`: `daily|hourly|monthly|unpartitioned`
 - `--parse`: run `dbt parse` after writing
+
+### `meta partition-config`, `meta hourly-config`, `meta monthly-config`
+
+Configure the shared `DailyPartitionsDefinition`, `HourlyPartitionsDefinition`, or `MonthlyPartitionsDefinition` used by every model of that partition type.
+
+```bash
+dbt-dagsterizer meta partition-config --include-current-day-partition
+dbt-dagsterizer meta hourly-config --include-current-hour-partition
+dbt-dagsterizer meta monthly-config --include-current-month-partition
+```
+
+Notes:
+
+- Each flag has a negated form (`--no-include-current-day-partition`, `--no-include-current-hour-partition`, `--no-include-current-month-partition`), which sets the Dagster `end_offset` to `0`.
+- These control the *set of available partitions*, not which partition a schedule targets — that is what `--offset-days` / `--offset-hours` / `--offset-months` do.
+- Partitioned models still need the matching `DAGSTER_*_PARTITIONS_START_DATE` environment variable at load time.
 
 ### `meta asset-job`
 
@@ -311,6 +348,7 @@ Notes:
 
 - Specify exactly one of `--detect-relation` or `--detect-source`.
 - `--detect-source` uses `source.table` format.
+- `--lookback-months` / `--offset-months` apply to models listed under `partitions.monthly`. Passing either one takes precedence over `--lookback-days` / `--offset-days` for that entry.
 
 ### `meta partition-change propagator`
 

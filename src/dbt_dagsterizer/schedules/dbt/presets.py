@@ -33,6 +33,8 @@ def daily_at(
         "partition_lookback_days": lookback_days,
         "partition_offset_hours": 0,
         "partition_lookback_hours": 0,
+        "partition_offset_months": 0,
+        "partition_lookback_months": 0,
         "enabled": enabled,
         "dedupe_across_ticks": dedupe_across_ticks,
         "timezone": timezone,
@@ -71,6 +73,55 @@ def hourly_at(
         "partition_lookback_days": 0,
         "partition_offset_hours": offset_hours,
         "partition_lookback_hours": lookback_hours,
+        "partition_offset_months": 0,
+        "partition_lookback_months": 0,
+        "enabled": enabled,
+        "dedupe_across_ticks": dedupe_across_ticks,
+        "timezone": timezone,
+    }
+
+
+def monthly_at(
+    *,
+    name: str,
+    job_name: str,
+    hour: int,
+    minute: int,
+    day_of_month: int = 1,
+    lookback_months: int = 0,
+    offset_months: int = 1,
+    enabled: bool = True,
+    dedupe_across_ticks: bool = True,
+    timezone: str = "UTC",
+):
+    if not name:
+        raise ValueError("Schedule name must be non-empty")
+    if not job_name:
+        raise ValueError("job_name must be non-empty")
+    if hour < 0 or hour > 23:
+        raise ValueError("hour must be 0..23")
+    if minute < 0 or minute > 59:
+        raise ValueError("minute must be 0..59")
+    # cron never fires on a 29th-31st during a shorter month, so the schedule would silently stall.
+    if day_of_month < 1 or day_of_month > 28:
+        raise ValueError("day_of_month must be 1..28")
+    if lookback_months < 0:
+        raise ValueError("lookback_months must be >= 0")
+    if offset_months < 0:
+        raise ValueError("offset_months must be >= 0")
+
+    cron = f"{minute} {hour} {day_of_month} * *"
+    return {
+        "name": name,
+        "cron_schedule": cron,
+        "job_name": job_name,
+        "partition_type": "monthly",
+        "partition_offset_days": 0,
+        "partition_lookback_days": 0,
+        "partition_offset_hours": 0,
+        "partition_lookback_hours": 0,
+        "partition_offset_months": offset_months,
+        "partition_lookback_months": lookback_months,
         "enabled": enabled,
         "dedupe_across_ticks": dedupe_across_ticks,
         "timezone": timezone,

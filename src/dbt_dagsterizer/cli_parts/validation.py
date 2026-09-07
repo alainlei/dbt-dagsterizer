@@ -61,10 +61,10 @@ def validate_orchestration(
     for model, p_type in sorted(idx.partitions_by_model.items()):
         if model not in existing_models:
             issues.append(ValidationIssue("error", f"partitions references missing model '{model}'"))
-        # Allow daily, hourly, or unpartitioned
-        if p_type not in {"daily", "hourly", "unpartitioned"}:
-            issues.append(ValidationIssue("error", f"partitions for model '{model}' must be daily|hourly|unpartitioned"))
-        if model in existing_models and p_type in {"daily", "hourly"} and "materialize_at_startup" in tags_by_model.get(
+        # Allow daily, hourly, monthly, or unpartitioned
+        if p_type not in {"daily", "hourly", "monthly", "unpartitioned"}:
+            issues.append(ValidationIssue("error", f"partitions for model '{model}' must be daily|hourly|monthly|unpartitioned"))
+        if model in existing_models and p_type in {"daily", "hourly", "monthly"} and "materialize_at_startup" in tags_by_model.get(
             model, set()
         ):
             issues.append(
@@ -96,6 +96,16 @@ def validate_orchestration(
                 if include_current_hour_partition is not None and not isinstance(include_current_hour_partition, bool):
                     issues.append(ValidationIssue("error", "partitions.hourly_config.include_current_hour_partition must be a boolean"))
 
+        # Validate monthly_config.include_current_month_partition
+        monthly_config = partitions_data.get("monthly_config")
+        if monthly_config is not None:
+            if not isinstance(monthly_config, dict):
+                issues.append(ValidationIssue("error", "partitions.monthly_config must be a mapping"))
+            else:
+                include_current_month_partition = monthly_config.get("include_current_month_partition")
+                if include_current_month_partition is not None and not isinstance(include_current_month_partition, bool):
+                    issues.append(ValidationIssue("error", "partitions.monthly_config.include_current_month_partition must be a boolean"))
+
     jobs = orchestration.get("jobs")
     if jobs is not None and not isinstance(jobs, dict):
         issues.append(ValidationIssue("error", "jobs must be a mapping"))
@@ -120,8 +130,8 @@ def validate_orchestration(
                 if m.strip() not in existing_models:
                     issues.append(ValidationIssue("error", f"jobs.{job_name} references missing model '{m.strip()}'"))
             partitions = job_cfg.get("partitions")
-            if partitions is not None and partitions not in {"daily", "hourly", "unpartitioned"}:
-                issues.append(ValidationIssue("error", f"jobs.{job_name}.partitions must be daily|hourly|unpartitioned when set"))
+            if partitions is not None and partitions not in {"daily", "hourly", "monthly", "unpartitioned"}:
+                issues.append(ValidationIssue("error", f"jobs.{job_name}.partitions must be daily|hourly|monthly|unpartitioned when set"))
             include_upstream = job_cfg.get("include_upstream")
             if include_upstream is not None and not isinstance(include_upstream, bool):
                 issues.append(ValidationIssue("error", f"jobs.{job_name}.include_upstream must be boolean when set"))
@@ -141,8 +151,8 @@ def validate_orchestration(
             if not isinstance(schedule_cfg, dict):
                 issues.append(ValidationIssue("error", f"schedules.{name} must be a mapping"))
                 continue
-            if schedule_cfg.get("type") not in {"daily_at", "hourly_at"}:
-                issues.append(ValidationIssue("error", f"schedules.{name}.type must be 'daily_at' or 'hourly_at'"))
+            if schedule_cfg.get("type") not in {"daily_at", "hourly_at", "monthly_at"}:
+                issues.append(ValidationIssue("error", f"schedules.{name}.type must be 'daily_at', 'hourly_at' or 'monthly_at'"))
             job_name = schedule_cfg.get("job_name")
             if not isinstance(job_name, str) or not job_name.strip():
                 issues.append(ValidationIssue("error", f"schedules.{name}.job_name must be non-empty"))
@@ -170,6 +180,18 @@ def validate_orchestration(
                         "error",
                         f"schedules.{name}: daily_at schedule cannot set offset_hours (use offset_days)"
                     ))
+                lookback_months = schedule_cfg.get("lookback_months")
+                offset_months = schedule_cfg.get("offset_months")
+                if lookback_months not in (None, 0):
+                    issues.append(ValidationIssue(
+                        "error",
+                        f"schedules.{name}: daily_at schedule cannot set lookback_months (use lookback_days)"
+                    ))
+                if offset_months not in (None, 0):
+                    issues.append(ValidationIssue(
+                        "error",
+                        f"schedules.{name}: daily_at schedule cannot set offset_months (use offset_days)"
+                    ))
                 lookback_days = schedule_cfg.get("lookback_days", 0)
                 if not isinstance(lookback_days, int) or lookback_days < 0:
                     issues.append(ValidationIssue("error", f"schedules.{name}.lookback_days must be >= 0"))
@@ -194,12 +216,61 @@ def validate_orchestration(
                         "error",
                         f"schedules.{name}: hourly_at schedule cannot set offset_days (use offset_hours)"
                     ))
+                lookback_months = schedule_cfg.get("lookback_months")
+                offset_months = schedule_cfg.get("offset_months")
+                if lookback_months not in (None, 0):
+                    issues.append(ValidationIssue(
+                        "error",
+                        f"schedules.{name}: hourly_at schedule cannot set lookback_months (use lookback_hours)"
+                    ))
+                if offset_months not in (None, 0):
+                    issues.append(ValidationIssue(
+                        "error",
+                        f"schedules.{name}: hourly_at schedule cannot set offset_months (use offset_hours)"
+                    ))
                 lookback_hours = schedule_cfg.get("lookback_hours", 0)
                 if not isinstance(lookback_hours, int) or lookback_hours < 0:
                     issues.append(ValidationIssue("error", f"schedules.{name}.lookback_hours must be >= 0"))
                 offset_hours = schedule_cfg.get("offset_hours", 1)
                 if not isinstance(offset_hours, int) or offset_hours < 0:
                     issues.append(ValidationIssue("error", f"schedules.{name}.offset_hours must be >= 0"))
+            elif schedule_type == "monthly_at":
+                if not isinstance(hour, int) or hour < 0 or hour > 23:
+                    issues.append(ValidationIssue("error", f"schedules.{name}.hour must be 0..23 (required for monthly_at)"))
+                # 29-31 would silently skip shorter months, stalling the schedule.
+                day_of_month = schedule_cfg.get("day_of_month", 1)
+                if not isinstance(day_of_month, int) or day_of_month < 1 or day_of_month > 28:
+                    issues.append(ValidationIssue("error", f"schedules.{name}.day_of_month must be 1..28"))
+                lookback_days = schedule_cfg.get("lookback_days")
+                offset_days = schedule_cfg.get("offset_days")
+                if lookback_days not in (None, 0):
+                    issues.append(ValidationIssue(
+                        "error",
+                        f"schedules.{name}: monthly_at schedule cannot set lookback_days (use lookback_months)"
+                    ))
+                if offset_days not in (None, 0):
+                    issues.append(ValidationIssue(
+                        "error",
+                        f"schedules.{name}: monthly_at schedule cannot set offset_days (use offset_months)"
+                    ))
+                lookback_hours = schedule_cfg.get("lookback_hours")
+                offset_hours = schedule_cfg.get("offset_hours")
+                if lookback_hours not in (None, 0):
+                    issues.append(ValidationIssue(
+                        "error",
+                        f"schedules.{name}: monthly_at schedule cannot set lookback_hours (use lookback_months)"
+                    ))
+                if offset_hours not in (None, 0):
+                    issues.append(ValidationIssue(
+                        "error",
+                        f"schedules.{name}: monthly_at schedule cannot set offset_hours (use offset_months)"
+                    ))
+                lookback_months = schedule_cfg.get("lookback_months", 0)
+                if not isinstance(lookback_months, int) or lookback_months < 0:
+                    issues.append(ValidationIssue("error", f"schedules.{name}.lookback_months must be >= 0"))
+                offset_months = schedule_cfg.get("offset_months", 1)
+                if not isinstance(offset_months, int) or offset_months < 0:
+                    issues.append(ValidationIssue("error", f"schedules.{name}.offset_months must be >= 0"))
 
     pc = orchestration.get("partition_change")
     if pc is not None and not isinstance(pc, dict):
@@ -390,8 +461,8 @@ def validate_orchestration_structure(*, orchestration: dict[str, Any]) -> list[V
     if partitions is not None and not isinstance(partitions, dict):
         issues.append(ValidationIssue("error", "partitions must be a mapping"))
     if isinstance(partitions, dict):
-        # Validate daily/hourly/unpartitioned partitions
-        for p_type in {"daily", "hourly", "unpartitioned"}:
+        # Validate daily/hourly/monthly/unpartitioned partitions
+        for p_type in {"daily", "hourly", "monthly", "unpartitioned"}:
             models = partitions.get(p_type)
             if isinstance(models, list):
                 for m in models:
@@ -418,6 +489,16 @@ def validate_orchestration_structure(*, orchestration: dict[str, Any]) -> list[V
                 if include_current_hour_partition is not None and not isinstance(include_current_hour_partition, bool):
                     issues.append(ValidationIssue("error", "partitions.hourly_config.include_current_hour_partition must be a boolean"))
 
+        # Validate monthly_config
+        monthly_config = partitions.get("monthly_config")
+        if monthly_config is not None:
+            if not isinstance(monthly_config, dict):
+                issues.append(ValidationIssue("error", "partitions.monthly_config must be a mapping"))
+            else:
+                include_current_month_partition = monthly_config.get("include_current_month_partition")
+                if include_current_month_partition is not None and not isinstance(include_current_month_partition, bool):
+                    issues.append(ValidationIssue("error", "partitions.monthly_config.include_current_month_partition must be a boolean"))
+
     jobs = orchestration.get("jobs")
     if jobs is not None and not isinstance(jobs, dict):
         issues.append(ValidationIssue("error", "jobs must be a mapping"))
@@ -433,8 +514,8 @@ def validate_orchestration_structure(*, orchestration: dict[str, Any]) -> list[V
             if not isinstance(models, list) or not models:
                 issues.append(ValidationIssue("error", f"jobs.{job_name}.models must be a non-empty list"))
             partitions_value = cfg.get("partitions")
-            if partitions_value is not None and partitions_value not in {"daily", "hourly", "unpartitioned"}:
-                issues.append(ValidationIssue("error", f"jobs.{job_name}.partitions must be daily|hourly|unpartitioned when set"))
+            if partitions_value is not None and partitions_value not in {"daily", "hourly", "monthly", "unpartitioned"}:
+                issues.append(ValidationIssue("error", f"jobs.{job_name}.partitions must be daily|hourly|monthly|unpartitioned when set"))
 
     schedules = orchestration.get("schedules")
     if schedules is not None and not isinstance(schedules, dict):
@@ -447,8 +528,8 @@ def validate_orchestration_structure(*, orchestration: dict[str, Any]) -> list[V
             if not isinstance(cfg, dict):
                 issues.append(ValidationIssue("error", f"schedules.{name} must be a mapping"))
                 continue
-            if cfg.get("type") not in {"daily_at", "hourly_at"}:
-                issues.append(ValidationIssue("error", f"schedules.{name}.type must be 'daily_at' or 'hourly_at'"))
+            if cfg.get("type") not in {"daily_at", "hourly_at", "monthly_at"}:
+                issues.append(ValidationIssue("error", f"schedules.{name}.type must be 'daily_at', 'hourly_at' or 'monthly_at'"))
             job_name = cfg.get("job_name")
             if not isinstance(job_name, str) or not job_name.strip():
                 issues.append(ValidationIssue("error", f"schedules.{name}.job_name must be non-empty"))

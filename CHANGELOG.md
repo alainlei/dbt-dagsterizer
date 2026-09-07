@@ -6,6 +6,36 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 ## [Unreleased]
 
+### Added
+
+- Added monthly partition support for dbt assets, jobs, schedules, replication, and partition-change sensors, at parity with the existing `daily` and `hourly` strategies.
+  - New `monthly` partition type in `dagsterization.yml` under `partitions.monthly`, configured with `DAGSTER_MONTHLY_PARTITIONS_START_DATE` (`YYYY-MM-DD`). Partition keys are the first day of each month (`2026-03-01`, `2026-04-01`, ...), matching Dagster's `MonthlyPartitionsDefinition`.
+  - New `partitions.monthly_config` section with `include_current_month_partition` (boolean, default `true`) controlling whether the in-progress month is available (`end_offset=1`) or not (`end_offset=0`). Dagster's `day_offset` is intentionally not exposed, so keys always start on day 1.
+  - New `monthly_at` schedule type with `day_of_month`, `hour`, `minute`, `lookback_months`, and `offset_months`. `day_of_month` is validated to `1..28` because cron never fires on a 29th-31st during a shorter month, which would silently stall the schedule. `offset_months` defaults to `1`, mirroring `offset_days: 1` — a schedule firing on the 1st materializes the month that just closed.
+  - New `monthly_at()` schedule preset in `schedules/dbt/presets.py`. Schedule spec dicts grew from 11 to 13 keys: all three schedule types now emit `partition_offset_months` and `partition_lookback_months`, zeroed when unused, matching the existing convention for the other granularity's fields.
+  - Monthly partition-change detectors. `sensors/partition_change/detector/sparse_lookback.py` gained a `granularity` parameter (`"day"` or `"month"`); month granularity groups watermarks with `date_trunc('month', CAST((<expr>) AS DATE))` so detected values line up with monthly partition keys. New `monthly_partition_change()` preset alongside `daily_partition_change()`.
+  - `SparseLookbackImpactRange` gained `start_offset_months` / `end_offset_months`. `impact.type: range` now rejects the wrong granularity's offset pair rather than silently misapplying it: day offsets on a monthly detector would produce mid-month dates such as `2026-03-15`, which are invalid monthly partition keys and would fail the `RunRequest`.
+  - CLI: `meta monthly-config`, `meta partition --type monthly`, `meta job --partitions monthly`, `meta schedule --schedule-type monthly_at` with `--day-of-month` / `--lookback-months` / `--offset-months`, and `meta partition-change detector --lookback-months` / `--offset-months`.
+  - Validation: `partitions.monthly_config` structure checks, `monthly` in the partition and job-partition enums, `monthly_at` in the schedule-type enum, and per-type rejection of cross-granularity offset/lookback fields (a `daily_at` schedule setting `offset_months` is now an error, and likewise for the other combinations).
+  - Test coverage: monthly partition definitions and env-var enforcement, `monthly_at` preset defaults/validation/cron format, monthly schedule factory partition keys including year rollover, monthly replication schedules, monthly partition-change sensors (watermark dedupe, month-based impact ranges, generated SQL), CLI round-trips, and an end-to-end `build_definitions` load test (`tests/test_integration_monthly.py`) that drives `meta validate` plus a full definitions build over a scratch dbt project containing a monthly-partitioned *replicated* model — the exact configuration that used to take the code location down.
+
+### Fixed
+
+- **A `monthly`-partitioned replicated model no longer prevents the whole code location from loading.** `schedules/replication/auto_config.py` emits `partition_type` straight from `partitions_by_model`, but `schedules/replication/factory.py` raised `Unsupported partition_type` for anything other than `unpartitioned`/`daily`/`hourly` at *definitions-build* time. The factory now handles `monthly`, emitting `YYYY-MM-01` keys, and the auto-generated replication cron for monthly models is `30 0 1 * *` (00:30 on the 1st) so that, with the default `offset_months: 1`, it replicates the month that just closed — the exact analogue of the daily `30 0 * * *` schedule replicating yesterday.
+
+### Changed
+
+- Detector partition-type derivation is deliberately narrow: only models explicitly listed under `partitions.monthly` get a month-granular detector. Hourly and unpartitioned models keep the existing daily-granular detector behaviour. Deriving the type the way replication `auto_config` does would flip hourly models to `partition_type="hourly"` and hit the detector factory's `Unsupported partition_type` raise — a regression for existing users.
+- No sensor cursor migration is needed. The `partition_watermark_v1` cursor is keyed by partition key string, and each sensor is either daily or monthly, so a daily `"2026-03-01"` and a monthly `"2026-03-01"` never share a cursor.
+- Docs: `dagsterization-yml.md` gained Monthly Partitions, Monthly Partition Configuration, Monthly Schedule, and Schedule Offset Months sections plus complete-example and troubleshooting updates. `cli.md` gained a section for the previously undocumented `meta partition-config` / `meta hourly-config` / `meta monthly-config` commands and full `meta schedule` flag documentation. `getting-started.md` and the template's `template_usage.md` and `.env.example` document `DAGSTER_MONTHLY_PARTITIONS_START_DATE`.
+
+### Known issues (pre-existing, not fixed here)
+
+- **`assets/replication/executor.py` filters partitions by equality on the raw partition key** (`WHERE {partition_column} = :pk`). A monthly key such as `2026-03-01` therefore matches only rows on the 1st of the month, silently under-replicating the rest. The identical bug already affects hourly keys (`2026-03-01-10:00`). Fixing it means range predicates instead of equality, which is a behaviour change for existing hourly users, so it is left for a separate issue.
+- **`build_replication_schedules` closures capture loop variables**, so every generated replication schedule reads the *last* spec's offset/lookback values instead of its own. The new monthly branch follows the existing pattern so a single future fix covers all four branches.
+- **`cli_parts/validation.py` only populates `tags_by_model` when daily models exist**, so the `materialize_at_startup` warning does not fire for monthly-only or hourly-only projects.
+- **Hourly `partition_change` detectors remain daily-granular** (see the detector derivation note above).
+
 ## [0.5.2] - 2026-08-21
 
 ### Added

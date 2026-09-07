@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 import dagster as dg
 
 from ...orchestration_config import normalize_timezone
+from ...partitions import add_months, month_floor
 
 
 def _with_optional_tick_suffix(*, run_key: str, scheduled_time, dedupe_across_ticks: bool) -> str:
@@ -97,6 +98,48 @@ def _build_hourly_partitioned_schedule(
     return _schedule
 
 
+def _build_monthly_partitioned_schedule(
+    *,
+    name: str,
+    cron_schedule: str,
+    job,
+    partition_offset_months: int,
+    partition_lookback_months: int,
+    dedupe_across_ticks: bool,
+    default_status: dg.DefaultScheduleStatus,
+    execution_timezone: str = "UTC",
+):
+    @dg.schedule(
+        name=name,
+        cron_schedule=cron_schedule,
+        job=job,
+        default_status=default_status,
+        execution_timezone=execution_timezone,
+    )
+    def _schedule(context):
+        scheduled_time = context.scheduled_execution_time or datetime.now(timezone.utc)
+
+        # Dagster MonthlyPartitionsDefinition keys are "YYYY-MM-01"
+        anchor_month = add_months(month_floor(scheduled_time.date()), -partition_offset_months)
+        run_requests = []
+        for i in range(partition_lookback_months + 1):
+            partition_key = add_months(anchor_month, -i).isoformat()
+            run_key = _with_optional_tick_suffix(
+                run_key=f"{name}:{partition_key}",
+                scheduled_time=scheduled_time,
+                dedupe_across_ticks=dedupe_across_ticks,
+            )
+            run_requests.append(
+                dg.RunRequest(
+                    partition_key=partition_key,
+                    run_key=run_key,
+                )
+            )
+        return run_requests
+
+    return _schedule
+
+
 def build_dbt_schedules(
     schedule_specs,
     jobs_by_name,
@@ -131,6 +174,13 @@ def build_dbt_schedules(
                     f"Daily schedule '{spec['name']}' cannot set hourly offset/lookback fields"
                 )
 
+            partition_offset_months = int(spec.get("partition_offset_months", 0))
+            partition_lookback_months = int(spec.get("partition_lookback_months", 0))
+            if partition_offset_months != 0 or partition_lookback_months != 0:
+                raise ValueError(
+                    f"Daily schedule '{spec['name']}' cannot set monthly offset/lookback fields"
+                )
+
             partition_offset_days = int(spec.get("partition_offset_days", 1))
             partition_lookback_days = int(spec.get("partition_lookback_days", 0))
             execution_timezone = normalize_timezone(spec.get("timezone"), default="UTC")
@@ -154,6 +204,13 @@ def build_dbt_schedules(
                     f"Hourly schedule '{spec['name']}' cannot set daily offset/lookback fields"
                 )
 
+            partition_offset_months = int(spec.get("partition_offset_months", 0))
+            partition_lookback_months = int(spec.get("partition_lookback_months", 0))
+            if partition_offset_months != 0 or partition_lookback_months != 0:
+                raise ValueError(
+                    f"Hourly schedule '{spec['name']}' cannot set monthly offset/lookback fields"
+                )
+
             partition_offset_hours = int(spec.get("partition_offset_hours", 1))
             partition_lookback_hours = int(spec.get("partition_lookback_hours", 0))
             execution_timezone = normalize_timezone(spec.get("timezone"), default="UTC")
@@ -163,6 +220,36 @@ def build_dbt_schedules(
                 job=job,
                 partition_offset_hours=partition_offset_hours,
                 partition_lookback_hours=partition_lookback_hours,
+                dedupe_across_ticks=dedupe_across_ticks,
+                default_status=default_status,
+                execution_timezone=execution_timezone,
+            )
+            continue
+
+        if partition_type == "monthly":
+            partition_offset_days = int(spec.get("partition_offset_days", 0))
+            partition_lookback_days = int(spec.get("partition_lookback_days", 0))
+            if partition_offset_days != 0 or partition_lookback_days != 0:
+                raise ValueError(
+                    f"Monthly schedule '{spec['name']}' cannot set daily offset/lookback fields"
+                )
+
+            partition_offset_hours = int(spec.get("partition_offset_hours", 0))
+            partition_lookback_hours = int(spec.get("partition_lookback_hours", 0))
+            if partition_offset_hours != 0 or partition_lookback_hours != 0:
+                raise ValueError(
+                    f"Monthly schedule '{spec['name']}' cannot set hourly offset/lookback fields"
+                )
+
+            partition_offset_months = int(spec.get("partition_offset_months", 1))
+            partition_lookback_months = int(spec.get("partition_lookback_months", 0))
+            execution_timezone = normalize_timezone(spec.get("timezone"), default="UTC")
+            schedules_by_name[spec["name"]] = _build_monthly_partitioned_schedule(
+                name=spec["name"],
+                cron_schedule=spec["cron_schedule"],
+                job=job,
+                partition_offset_months=partition_offset_months,
+                partition_lookback_months=partition_lookback_months,
                 dedupe_across_ticks=dedupe_across_ticks,
                 default_status=default_status,
                 execution_timezone=execution_timezone,
