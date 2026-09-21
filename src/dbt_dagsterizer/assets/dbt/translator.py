@@ -52,6 +52,7 @@ class LubanDagsterDbtTranslator(DagsterDbtTranslator):
         partitions_by_model: dict[str, str] | None = None,
         hourly_partitions_def: Optional[dg.PartitionsDefinition] = None,
         monthly_partitions_def: Optional[dg.PartitionsDefinition] = None,
+        unobserved_source_keys: list[dg.AssetKey] | None = None,
     ):
         super().__init__()
         self.daily_partitions_def = daily_partitions_def
@@ -59,6 +60,12 @@ class LubanDagsterDbtTranslator(DagsterDbtTranslator):
         self.monthly_partitions_def = monthly_partitions_def
         self.automation_observable_tables = automation_observable_tables or set()
         self.partitions_by_model = partitions_by_model or {}
+        self.unobserved_source_keys = list(unobserved_source_keys or [])
+        self._unobserved_source_selection = (
+            dg.AssetSelection.assets(*self.unobserved_source_keys)
+            if self.unobserved_source_keys
+            else None
+        )
         self.propagator_mode = os.getenv(
             "LUBAN_PARTITION_CHANGE_PROPAGATOR_MODE", "sensor").strip().lower()
 
@@ -79,21 +86,41 @@ class LubanDagsterDbtTranslator(DagsterDbtTranslator):
         automation_tables = self.automation_observable_tables
 
         if name in automation_tables:
-            return dg.AutomationCondition.eager()
+            return self._eager()
 
         if self._propagator_mode_is_eager() and (is_daily or is_hourly or is_monthly):
-            return dg.AutomationCondition.eager()
+            return self._eager()
 
         if "dim" in tags:
-            return dg.AutomationCondition.eager()
+            return self._eager()
 
         if "automation_table" in tags:
-            return dg.AutomationCondition.eager()
+            return self._eager()
 
         if "materialize_at_startup" in tags:
             return dg.AutomationCondition.missing()
 
         return None
+
+    def _eager(self) -> dg.AutomationCondition:
+        """Eager condition tolerant of dbt sources that can never be observed.
+
+        Sources without ``meta.luban.observe.*`` metadata (and not marked
+        ``meta.luban.external_code_location``) get no asset definition, so they
+        can never record observation or materialization events. Stock ``eager()``
+        gates on ``~any_deps_missing()``, which such dependency keys can never
+        satisfy, silently blocking the model forever. Excluding them from the
+        missing check keeps event-driven refresh working off the remaining
+        parents.
+        """
+        if self._unobserved_source_selection is None:
+            return dg.AutomationCondition.eager()
+        return dg.AutomationCondition.eager().replace(
+            "any_deps_missing",
+            dg.AutomationCondition.any_deps_missing()
+            .ignore(self._unobserved_source_selection)
+            .with_label("any_deps_missing_ignoring_unobserved_sources"),
+        )
 
     def _propagator_mode_is_eager(self) -> bool:
         return self.propagator_mode == "eager"

@@ -124,3 +124,29 @@ def build_observable_source_assets(
         return _observable
 
     return [make_asset(spec) for spec in source_specs]
+
+
+def build_unobserved_source_assets(*, specs: list[dict]) -> list[dg.AssetsDefinition]:
+    """Build definition-only assets for dbt sources that can never emit events.
+
+    Sources without ``meta.luban.observe.*`` metadata (and not marked
+    ``meta.luban.external_code_location``) have no observable/materializable
+    definition, so without these specs they would show up in the asset graph only
+    as bare dependency nodes.  The specs are lineage-only: no compute function,
+    no partitions, and no automation condition, so Dagster can never request or
+    materialize them.
+    """
+    asset_specs = [
+        dg.AssetSpec(
+            key=dg.AssetKey(spec["key_path"]),
+            group_name=spec.get("group") or DEFAULT_SOURCE_GROUP_NAME,
+            description=(
+                f"dbt source {spec.get('source')}.{spec.get('name')} — declared without "
+                "meta.luban.observe.* metadata; lineage only, never materialized by Dagster."
+            ),
+        )
+        for spec in specs
+    ]
+    if not asset_specs:
+        return []
+    return [dg.AssetsDefinition(specs=asset_specs)]

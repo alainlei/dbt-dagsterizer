@@ -68,6 +68,8 @@ The dbt translator assigns `AutomationCondition.eager()` to models that match on
 - the model carries the `dim` tag
 - the model carries the `automation_table` tag
 
+Note: sources without `meta.luban.observe.*` metadata get a lineage-only source asset (visible in the asset graph, never materializable) and can never record events. All of the eager rules above automatically exclude such source keys from the upstream-missing check, so a `dim` model that also reads a non-observed lookup table still refreshes when its observed source detects new data. Observable sources keep gating normally: a model still waits for each observable source's first observation.
+
 When Dagster detects an upstream change, the automation sensor can request a run to materialize the affected downstream assets.
 
 In the default template layout, this commonly means:

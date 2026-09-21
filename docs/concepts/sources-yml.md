@@ -220,6 +220,23 @@ In the table-level example, only `ext_table` is marked external. `local_table` i
 
 ---
 
+### Sources without metadata (lineage-only assets)
+
+Sources that declare **neither** `meta.luban.observe.*` nor `meta.luban.external_code_location` can never be observed or materialized, but dbt-dagsterizer still creates a **lineage-only** asset spec for each of them:
+
+| Attribute | Value |
+|-----------|-------|
+| **Definition** | `AssetsDefinition(specs=...)` with no compute function — shown in the asset graph and lineage, never launchable |
+| **Group** | `meta.luban.group` when set (table-level first, then source-level), otherwise `source` |
+| **Automation** | none — the asset can never record a materialization or observation event |
+| **Collision safety** | skipped when a dbt model/seed/snapshot already produces the same relation key |
+
+Because these sources never record events, `dim` / `automation_table` models that also read them are unaffected: the sources are excluded from the eager condition's upstream-missing check, so the models still refresh when their observable parents detect new data.
+
+To make a source observable instead, add `meta.luban.observe.watermark_column` (or `watermark_sql`) — see above.
+
+---
+
 ## Cascade Rules
 
 All `meta.luban` source properties follow the same cascade pattern:

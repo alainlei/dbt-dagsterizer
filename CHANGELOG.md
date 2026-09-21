@@ -6,6 +6,14 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 ## [Unreleased]
 
+### Added
+
+- **Lineage-only asset specs for unobserved dbt sources.** dbt sources without `meta.luban.observe.*` metadata (and not owned by another code location via `meta.luban.external_code_location`) previously existed in the Dagster asset graph only as bare dependency nodes with no definition. They are now represented by definition-only `AssetSpec`s built by the new `build_unobserved_source_assets()` in `assets/sources/factory.py` (keys and groups from the new `load_unobserved_source_specs()` in `assets/sources/automation.py`), so upstream tables appear in the asset graph and lineage next to their observable siblings, grouped under the source's `meta.luban.group` (or the default `source` group). The specs are lineage-only — no compute function, no partitions, and no automation condition — so Dagster can never request or materialize them. Source tables whose relation key is already produced by a model/seed/snapshot are skipped to avoid duplicate asset definitions. The eager-gate exclusion from the Fixed entry below still applies, so these sources never block `dim` / `automation_table` models.
+
+### Fixed
+
+- **`dim` / `automation_table` (and other eager) dbt models are no longer permanently blocked by non-observable dbt sources.** `AutomationCondition.eager()` gates on `~any_deps_missing()`, which requires every upstream asset key to have at least one event record. A dbt source without `meta.luban.observe.*` metadata (and not marked `meta.luban.external_code_location`) has no asset definition and can therefore never record an observation or materialization event — so any eager model reading such a source (for example an incremental model joining an observed fact table to a rarely-changing dimension table) never materialized automatically, with no error surfaced. The dbt translator now receives the set of such "unobserved" source keys (computed by the new `load_unobserved_source_key_paths()` in `assets/sources/automation.py`, which classifies manifest sources as observable vs external vs plain) and replaces the eager condition's `any_deps_missing` check with an `.ignore(...)`-scoped variant, so event-driven refresh works off the remaining parents. Observable sources keep their semantics: an eager model still waits until each observable upstream source has recorded its first observation. When a project has no unobserved sources the stock `eager()` is returned unchanged, so existing definitions are unaffected. Applies to all four eager branches in the translator (model-name match, propagator `eager` mode, `dim` tag, `automation_table` tag).
+
 ## [0.5.3] - 2026-09-08
 
 ### Added

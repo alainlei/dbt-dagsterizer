@@ -35,7 +35,11 @@ from ...partitions import (
 )
 from ...resources.dbt import get_dbt_project_dir
 from ...resources.starrocks import make_starrocks_resource
-from ..sources.automation import load_external_source_names, load_filtered_observable_sources
+from ..sources.automation import (
+    load_external_source_names,
+    load_filtered_observable_sources,
+    load_unobserved_source_key_paths,
+)
 from .prepare import prepare_manifest_if_missing
 from .translator import LubanDagsterDbtTranslator
 from .vars import _get_dbt_vars_for_context
@@ -168,6 +172,9 @@ def get_dbt_assets():
     automation_observable_tables = {
         spec["table"] for spec in load_filtered_observable_sources() if spec.get("table")
     }
+    unobserved_source_keys = [
+        dg.AssetKey(path) for path in load_unobserved_source_key_paths()
+    ]
 
     orch_cfg_path = resolve_orchestration_path(
         dbt_project_dir=dbt_project_dir,
@@ -221,6 +228,7 @@ def get_dbt_assets():
         monthly_partitions_def=monthly_partitions_def,
         automation_observable_tables=automation_observable_tables,
         partitions_by_model=orch_index.partitions_by_model,
+        unobserved_source_keys=unobserved_source_keys,
     )
 
     dbt_assets_kwargs = {
