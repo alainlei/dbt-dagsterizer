@@ -140,6 +140,29 @@ def _build_monthly_partitioned_schedule(
     return _schedule
 
 
+def _build_unpartitioned_schedule(
+    *,
+    name: str,
+    cron_schedule: str,
+    job,
+    default_status: dg.DefaultScheduleStatus,
+    execution_timezone: str = "UTC",
+):
+    @dg.schedule(
+        name=name,
+        cron_schedule=cron_schedule,
+        job=job,
+        default_status=default_status,
+        execution_timezone=execution_timezone,
+    )
+    def _schedule(context):
+        # Unpartitioned jobs have no partition keys, so every tick launches a run;
+        # a constant run_key would dedupe all later ticks away.
+        return dg.RunRequest()
+
+    return _schedule
+
+
 def build_dbt_schedules(
     schedule_specs,
     jobs_by_name,
@@ -251,6 +274,30 @@ def build_dbt_schedules(
                 partition_offset_months=partition_offset_months,
                 partition_lookback_months=partition_lookback_months,
                 dedupe_across_ticks=dedupe_across_ticks,
+                default_status=default_status,
+                execution_timezone=execution_timezone,
+            )
+            continue
+
+        if partition_type == "unpartitioned":
+            offset_and_lookback = (
+                int(spec.get("partition_offset_days", 0)),
+                int(spec.get("partition_lookback_days", 0)),
+                int(spec.get("partition_offset_hours", 0)),
+                int(spec.get("partition_lookback_hours", 0)),
+                int(spec.get("partition_offset_months", 0)),
+                int(spec.get("partition_lookback_months", 0)),
+            )
+            if any(offset_and_lookback):
+                raise ValueError(
+                    f"Unpartitioned schedule '{spec['name']}' cannot set offset/lookback fields"
+                )
+
+            execution_timezone = normalize_timezone(spec.get("timezone"), default="UTC")
+            schedules_by_name[spec["name"]] = _build_unpartitioned_schedule(
+                name=spec["name"],
+                cron_schedule=spec["cron_schedule"],
+                job=job,
                 default_status=default_status,
                 execution_timezone=execution_timezone,
             )

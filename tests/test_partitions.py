@@ -1241,9 +1241,9 @@ def test_validation_hourly_at_rejects_month_fields():
 
 
 def test_validation_rejects_unknown_schedule_type():
-    """The schedule-type enum error message now names monthly_at."""
+    """The schedule-type enum error message now names cron."""
     errors = _deep_errors(_monthly_orchestration(type="weekly_at"))
-    assert any("must be 'daily_at', 'hourly_at' or 'monthly_at'" in e for e in errors)
+    assert any("must be 'daily_at', 'hourly_at', 'monthly_at' or 'cron'" in e for e in errors)
 
 
 def test_validation_rejects_unknown_job_partition_type():

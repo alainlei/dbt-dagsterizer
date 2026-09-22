@@ -8,6 +8,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ruamel.yaml import YAML
 
+from .cron import validate_cron_expression
+
 
 @dataclass(frozen=True)
 class ReplicationEntry:
@@ -459,9 +461,9 @@ def set_schedule(
     name: str,
     job_name: str,
     schedule_type: str,
-    hour: int,
-    minute: int,
-    lookback_days: int,
+    hour: int | None = None,
+    minute: int | None = None,
+    lookback_days: int = 0,
     offset_days: int = 1,
     enabled: bool,
     lookback_hours: int = 0,
@@ -469,24 +471,58 @@ def set_schedule(
     day_of_month: int = 1,
     lookback_months: int = 0,
     offset_months: int = 1,
+    cron_expression: str | None = None,
+    partition_type: str | None = None,
 ) -> None:
+    """Add or update a schedule entry.
+
+    Args:
+        data: Orchestration config dict
+        name: Schedule name (key under `schedules`)
+        job_name: Target job name
+        schedule_type: "daily_at", "hourly_at", "monthly_at", or "cron"
+        hour: Hour of day (0..23); required unless schedule_type is "cron"
+        minute: Minute of hour (0..59); required unless schedule_type is "cron"
+        lookback_days: Daily partitions to also run, counting back from the anchor
+        offset_days: Daily offset from the tick day (1 = yesterday)
+        enabled: Whether the schedule is active
+        lookback_hours: Hourly partitions to also run, counting back from the anchor
+        offset_hours: Hourly offset from the tick hour (1 = previous hour)
+        day_of_month: Day of month for monthly_at (1..28)
+        lookback_months: Monthly partitions to also run, counting back from the anchor
+        offset_months: Monthly offset from the tick month (1 = previous month)
+        cron_expression: Five-field cron expression; required when schedule_type is "cron"
+        partition_type: Partition granularity a cron schedule targets (default "daily")
+    """
     name = name.strip()
     if not name:
         raise ValueError("schedule name must be non-empty")
     job_name = job_name.strip()
     if not job_name:
         raise ValueError("schedule job_name must be non-empty")
-    if schedule_type not in {"daily_at", "hourly_at", "monthly_at"}:
-        raise ValueError("schedule type must be 'daily_at', 'hourly_at' or 'monthly_at'")
+    if schedule_type not in {"daily_at", "hourly_at", "monthly_at", "cron"}:
+        raise ValueError("schedule type must be 'daily_at', 'hourly_at', 'monthly_at' or 'cron'")
 
     schedules = _ensure_mapping(data, "schedules")
     entry: dict[str, Any] = {
         "type": schedule_type,
         "job_name": job_name,
-        "hour": int(hour),
-        "minute": int(minute),
-        "enabled": bool(enabled),
     }
+    cron_partition_type: str | None = None
+    if schedule_type == "cron":
+        if not cron_expression or not cron_expression.strip():
+            raise ValueError("cron schedule requires a non-empty cron_expression")
+        entry["cron_expression"] = validate_cron_expression(cron_expression)
+        cron_partition_type = (partition_type or "daily").strip().lower()
+        if cron_partition_type not in {"daily", "hourly", "monthly", "unpartitioned"}:
+            raise ValueError("cron partition_type must be one of daily|hourly|monthly|unpartitioned")
+        entry["partition_type"] = cron_partition_type
+    else:
+        if hour is None or minute is None:
+            raise ValueError(f"hour and minute are required for schedule type '{schedule_type}'")
+        entry["hour"] = int(hour)
+        entry["minute"] = int(minute)
+    entry["enabled"] = bool(enabled)
     if schedule_type == "daily_at":
         entry["lookback_days"] = int(lookback_days)
         entry["offset_days"] = int(offset_days)
@@ -497,6 +533,16 @@ def set_schedule(
         entry["day_of_month"] = int(day_of_month)
         entry["lookback_months"] = int(lookback_months)
         entry["offset_months"] = int(offset_months)
+    elif cron_partition_type == "daily":
+        entry["lookback_days"] = int(lookback_days)
+        entry["offset_days"] = int(offset_days)
+    elif cron_partition_type == "hourly":
+        entry["lookback_hours"] = int(lookback_hours)
+        entry["offset_hours"] = int(offset_hours)
+    elif cron_partition_type == "monthly":
+        entry["lookback_months"] = int(lookback_months)
+        entry["offset_months"] = int(offset_months)
+    # Unpartitioned cron schedules run the whole job, so no partition window is stored.
     schedules[name] = entry
 
 

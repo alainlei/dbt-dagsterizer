@@ -528,3 +528,189 @@ def test_meta_partition_change_detector_monthly_offsets(tmp_path: Path):
     assert entry["offset_months"] == 0
     assert "lookback_days" not in entry
     assert "offset_days" not in entry
+
+
+# --- cron schedule CLI round-trips ---
+
+
+def test_meta_schedule_cron(tmp_path: Path):
+    """meta schedule --schedule-type cron writes the cron_expression, not a tick time."""
+    runner, dbt_project, orch_path = _init_dbt_project(tmp_path)
+
+    result = runner.invoke(
+        cli,
+        [
+            "meta",
+            "schedule",
+            "--dbt-project-dir",
+            str(dbt_project),
+            "--models",
+            "orders",
+            "--name",
+            "orders_cron",
+            "--schedule-type",
+            "cron",
+            "--cron-expression",
+            "*/15 * * * *",
+            "--offset-days",
+            "2",
+            "--no-prepare",
+            "--no-parse",
+        ],
+    )
+    assert result.exit_code == 0
+
+    data = _load_yaml(orch_path)
+    entry = data["schedules"]["orders_cron"]
+    assert entry["type"] == "cron"
+    assert entry["cron_expression"] == "*/15 * * * *"
+    assert entry["partition_type"] == "daily"
+    assert entry["offset_days"] == 2
+    assert "hour" not in entry
+    assert "minute" not in entry
+
+
+def test_meta_schedule_cron_hourly_partition_type(tmp_path: Path):
+    """--partition-type hourly writes hour-window fields for a cron schedule."""
+    runner, dbt_project, orch_path = _init_dbt_project(tmp_path)
+
+    result = runner.invoke(
+        cli,
+        [
+            "meta",
+            "schedule",
+            "--dbt-project-dir",
+            str(dbt_project),
+            "--models",
+            "orders",
+            "--name",
+            "orders_cron_hourly",
+            "--schedule-type",
+            "cron",
+            "--cron-expression",
+            "*/5 * * * *",
+            "--partition-type",
+            "hourly",
+            "--lookback-hours",
+            "2",
+            "--offset-hours",
+            "1",
+            "--no-prepare",
+            "--no-parse",
+        ],
+    )
+    assert result.exit_code == 0
+
+    data = _load_yaml(orch_path)
+    entry = data["schedules"]["orders_cron_hourly"]
+    assert entry["partition_type"] == "hourly"
+    assert entry["lookback_hours"] == 2
+    assert entry["offset_hours"] == 1
+    assert "lookback_days" not in entry
+    assert "offset_days" not in entry
+
+
+def test_meta_schedule_cron_requires_expression(tmp_path: Path):
+    """--schedule-type cron without --cron-expression is rejected."""
+    runner, dbt_project, _ = _init_dbt_project(tmp_path)
+
+    result = runner.invoke(
+        cli,
+        [
+            "meta",
+            "schedule",
+            "--dbt-project-dir",
+            str(dbt_project),
+            "--models",
+            "orders",
+            "--name",
+            "orders_cron",
+            "--schedule-type",
+            "cron",
+            "--no-prepare",
+            "--no-parse",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "--cron-expression is required" in result.output
+
+
+def test_meta_schedule_cron_rejects_invalid_expression(tmp_path: Path):
+    """An out-of-range cron field fails fast with the offending field named."""
+    runner, dbt_project, _ = _init_dbt_project(tmp_path)
+
+    result = runner.invoke(
+        cli,
+        [
+            "meta",
+            "schedule",
+            "--dbt-project-dir",
+            str(dbt_project),
+            "--models",
+            "orders",
+            "--name",
+            "orders_cron",
+            "--schedule-type",
+            "cron",
+            "--cron-expression",
+            "60 * * * *",
+            "--no-prepare",
+            "--no-parse",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "minute field" in result.output
+
+
+def test_meta_schedule_cron_expression_rejected_for_legacy_types(tmp_path: Path):
+    """--cron-expression only applies to --schedule-type cron."""
+    runner, dbt_project, _ = _init_dbt_project(tmp_path)
+
+    result = runner.invoke(
+        cli,
+        [
+            "meta",
+            "schedule",
+            "--dbt-project-dir",
+            str(dbt_project),
+            "--models",
+            "orders",
+            "--name",
+            "orders_daily",
+            "--cron-expression",
+            "*/15 * * * *",
+            "--no-prepare",
+            "--no-parse",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "--cron-expression requires --schedule-type cron" in result.output
+
+
+def test_meta_schedule_partition_type_rejected_for_legacy_types(tmp_path: Path):
+    """--partition-type only applies to --schedule-type cron."""
+    runner, dbt_project, _ = _init_dbt_project(tmp_path)
+
+    result = runner.invoke(
+        cli,
+        [
+            "meta",
+            "schedule",
+            "--dbt-project-dir",
+            str(dbt_project),
+            "--models",
+            "orders",
+            "--name",
+            "orders_daily",
+            "--partition-type",
+            "daily",
+            "--hour",
+            "1",
+            "--minute",
+            "0",
+            "--no-prepare",
+            "--no-parse",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "--partition-type is only valid with --schedule-type cron" in result.output

@@ -202,15 +202,17 @@ dbt-dagsterizer meta schedule \
 
 Flags:
 
-- `--schedule-type`: `daily_at` (default), `hourly_at` or `monthly_at`
+- `--schedule-type`: `daily_at` (default), `hourly_at`, `monthly_at` or `cron`
 - `--hour`: required for `daily_at` and `monthly_at`; optional for `hourly_at` (defaults to `0`). Valid `0..23`
 - `--lookback-days` / `--offset-days`: partition window for `daily_at` (`--offset-days 1` = yesterday, `0` = today)
 - `--lookback-hours` / `--offset-hours`: partition window for `hourly_at` (`--offset-hours 1` = previous hour)
 - `--day-of-month`: day the `monthly_at` schedule fires. Valid `1..28` (default `1`); higher values are rejected because cron never fires on a 29th-31st during a shorter month
 - `--lookback-months` / `--offset-months`: partition window for `monthly_at` (`--offset-months 1` = previous month, `0` = current month)
+- `--cron-expression`: five-field cron expression, required for `--schedule-type cron` (e.g. `"*/15 * * * *"`). Lists, ranges, steps, month/day names, `L`, `weekday#nth`, `?` and `@daily`-style macros are supported; out-of-range fields and expressions that can never fire are rejected up front
+- `--partition-type`: partition window a cron schedule targets: `daily|hourly|monthly|unpartitioned` (default `daily`)
 - `--parse`: run `dbt parse` after writing
 
-Only the flags matching `--schedule-type` are written. `meta validate` rejects a schedule that mixes granularities, such as `offset_months` on a `daily_at` schedule.
+Only the flags matching `--schedule-type` are written. `meta validate` rejects a schedule that mixes granularities, such as `offset_months` on a `daily_at` schedule or `offset_hours` on a `partition_type: daily` cron schedule.
 
 Monthly example:
 
@@ -223,6 +225,19 @@ dbt-dagsterizer meta schedule \
   --hour 4 \
   --minute 0 \
   --offset-months 1 \
+  --enabled
+```
+
+Cron example:
+
+```bash
+dbt-dagsterizer meta schedule \
+  --models orders \
+  --name orders_every_15min \
+  --schedule-type cron \
+  --cron-expression "*/15 * * * *" \
+  --partition-type daily \
+  --offset-days 1 \
   --enabled
 ```
 
