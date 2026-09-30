@@ -71,6 +71,34 @@ _FIELDS = (
 )
 
 
+# Maximum day-of-month each calendar month supports.  February is 28 days here;
+# leap-day (29) acceptance is handled separately when month list == [2].
+_MONTH_MAX_DOM = (
+    None,  # month index starts at 1
+    31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31,
+)
+
+
+def _dom_values(raw_field: str) -> set[int] | None:
+    """Return the set of numeric day-of-month values explicitly enumerated in a field.
+
+    Symbolic tokens ('L', '?') collapse to ``None`` because they expand to a
+    date that depends on the specific month (e.g. last-day-of-month always
+    exists), so a never-fire check cannot reason about them statically.
+    """
+    spec = _FIELDS[2]
+    values: set[int] = set()
+    for token in raw_field.split(","):
+        t = token.strip().lower()
+        if not t or t in {"?", "l"}:
+            return None
+        # Steps/ranges produce only numeric values in the 1..31 range after parsing.
+        values.update(_parse_field(raw_field=t, spec=spec))
+    if not values:
+        return None
+    return values
+
+
 def _normalize(expression: str) -> str:
     if not isinstance(expression, str):
         raise ValueError("cron expression must be a string")
@@ -186,9 +214,42 @@ def validate_cron_expression(expression: str) -> str:
         for token in raw_field.split(","):
             _parse_token(token.strip(), spec)
 
-    # Dagster rejects schedules that can never fire, e.g. February 30th.
-    if fields[2] in {"30", "31"} and _parse_field(fields[3], _FIELDS[3]) == [2]:
-        raise ValueError(f"cron expression '{normalized}' never fires: February has no {fields[2]}th day")
+    # Detect expressions where the (day-of-month) × (month) cross-product is empty:
+    # every month in the expanded month list has fewer days than any of the
+    # enumerated day-of-month values.  Symbolic dom tokens ('L', '?') produce a
+    # month-dependent date so they always have at least one firing month and we
+    # must not reject them.
+    dom_set = _dom_values(fields[2])
+    months = _parse_field(fields[3], _FIELDS[3])
+    if dom_set is not None and months:
+        # February leap-day (29): when the month list is exactly [2] then dom=29
+        # is still technically valid (fires in leap years), but Dagster uses
+        # MonthlyPartitionsDefinition / croniter and both silently skip non-leap
+        # years → the schedule would fire only every 4 years.  Reject dom >= 30
+        # against pure-February outright, and warn on dom=29 against pure-Feb
+        # via the cron-expression-warnings path below.
+        if months == [2] and any(dom >= 30 for dom in dom_set):
+            sample = sorted(d for d in dom_set if d >= 30)[0]
+            raise ValueError(
+                f"cron expression '{normalized}' never fires: February has no {sample}th day"
+            )
+        # General cross-product check against the 28-day February floor so that
+        # we don't even try to reason about leap days here (above guard already
+        # handled the dom >= 30 case).
+        failing_doms: dict[int, list[int]] = {}
+        for dom in sorted(dom_set):
+            impossible_months: list[int] = []
+            for month in months:
+                if dom > _MONTH_MAX_DOM[month]:
+                    impossible_months.append(month)
+            if len(impossible_months) == len(months):
+                failing_doms[dom] = impossible_months
+        if failing_doms:
+            dom, impossible_months = next(iter(failing_doms.items()))
+            raise ValueError(
+                f"cron expression '{normalized}' never fires: day-of-month {dom} does not "
+                f"exist in any of the selected months {sorted(impossible_months)}"
+            )
 
     return normalized
 

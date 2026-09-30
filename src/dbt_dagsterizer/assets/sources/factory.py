@@ -47,14 +47,35 @@ def build_observable_source_assets(
     if not dbt_assets_list:
         raise ValueError("dbt_assets cannot be empty")
     
-    # If there's only one dbt_assets, use it directly
+    # The observable source asset key map depends purely on the translator's
+    # relation-based key builder (physical DB/schema/identifier).  Partition
+    # definitions and per-decorator instance state do not participate in key
+    # generation, so every @dbt_assets in a multi-element list is expected to
+    # yield identical source keys for the same source/table.  Assert the
+    # invariant defensively so a future refactor can never silently pick an
+    # incomplete map.
     if len(dbt_assets_list) == 1:
         dbt_assets_for_sources = dbt_assets_list[0]
     else:
-        # Multiple dbt_assets: we need to use the first one that has source assets
-        # or combine them. For now, use the first one as the primary.
-        # The source assets should be present in all partition types anyway.
         dbt_assets_for_sources = dbt_assets_list[0]
+        sample_keys_by_source_table: dict[str, dict[str, dg.AssetKey]] = {}
+        for source in {spec["source"] for spec in source_specs}:
+            sample_keys_by_source_table[source] = get_asset_keys_by_output_name_for_source(
+                [dbt_assets_for_sources], source
+            )
+        for alt in dbt_assets_list[1:]:
+            for source, expected in sample_keys_by_source_table.items():
+                actual = get_asset_keys_by_output_name_for_source([alt], source)
+                if expected != actual:
+                    mismatches = sorted(
+                        k for k in set(expected) | set(actual) if expected.get(k) != actual.get(k)
+                    )
+                    raise RuntimeError(
+                        "Multiple dbt_assets passed to build_observable_source_assets produce "
+                        f"different source key maps for source={source}; differing output names: "
+                        f"{mismatches}.  All @dbt_assets decorators must share the same translator "
+                        "relation-key configuration."
+                    )
 
     source_names = {spec["source"] for spec in source_specs}
     keys_by_source_table = {}
