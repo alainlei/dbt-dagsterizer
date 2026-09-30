@@ -15,7 +15,12 @@ from ...orchestration_config import (
     load_or_create as load_orch,
 )
 from ...resources.dbt import get_dbt_project_dir
-from .presets import daily_at, hourly_at, monthly_at
+from .presets import cron, daily_at, hourly_at, monthly_at
+
+
+def _optional_int(value) -> int | None:
+    """Keep unset keys as None so the preset applies its own per-granularity default."""
+    return None if value is None else int(value)
 
 
 def build_auto_dbt_schedule_specs() -> list[dict]:
@@ -96,6 +101,33 @@ def build_auto_dbt_schedule_specs() -> list[dict]:
                         day_of_month=day_of_month,
                         lookback_months=lookback_months,
                         offset_months=offset_months,
+                        enabled=enabled,
+                        timezone=global_timezone,
+                    )
+                )
+                continue
+
+            if schedule_type == "cron":
+                cron_expression = schedule_meta.get("cron_expression")
+                if not isinstance(cron_expression, str) or not cron_expression.strip():
+                    raise ValueError(f"Schedule '{name}' requires cron_expression")
+                partition_type = schedule_meta.get("partition_type") or "daily"
+                if partition_type not in {"daily", "hourly", "monthly", "unpartitioned"}:
+                    raise ValueError(
+                        f"Schedule '{name}' partition_type must be daily|hourly|monthly|unpartitioned"
+                    )
+                specs.append(
+                    cron(
+                        name=str(name),
+                        job_name=str(job_name),
+                        cron_expression=cron_expression,
+                        partition_type=partition_type,
+                        lookback_days=_optional_int(schedule_meta.get("lookback_days")),
+                        offset_days=_optional_int(schedule_meta.get("offset_days")),
+                        lookback_hours=_optional_int(schedule_meta.get("lookback_hours")),
+                        offset_hours=_optional_int(schedule_meta.get("offset_hours")),
+                        lookback_months=_optional_int(schedule_meta.get("lookback_months")),
+                        offset_months=_optional_int(schedule_meta.get("offset_months")),
                         enabled=enabled,
                         timezone=global_timezone,
                     )

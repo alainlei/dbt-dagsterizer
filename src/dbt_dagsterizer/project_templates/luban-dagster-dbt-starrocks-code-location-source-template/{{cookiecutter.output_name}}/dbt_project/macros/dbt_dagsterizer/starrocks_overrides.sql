@@ -1,6 +1,10 @@
 {% macro starrocks__drop_relation(relation) -%}
   {% call statement('drop_relation', auto_begin=False) -%}
-    drop {{ relation.type }} if exists {{ relation }} force
+    {%- if relation.type == 'view' -%}
+      drop {{ relation.type }} if exists {{ relation }}
+    {%- else -%}
+      drop {{ relation.type }} if exists {{ relation }} force
+    {%- endif -%}
   {%- endcall %}
 {% endmacro %}
 

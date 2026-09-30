@@ -7,6 +7,42 @@ These notes are intended to be a polished companion to `CHANGELOG.md`:
 - `CHANGELOG.md` remains the cumulative project history.
 - This document provides concise, version-by-version release summaries that are easy to reuse for GitHub Releases and upgrade communication.
 
+## v0.5.4
+
+Release date: 2026-09-22
+
+### Summary
+
+`v0.5.4` delivers two features. First, **cron-based schedules with partition control**: a new `type: cron` schedule entry accepts any five-field crontab expression (lists, ranges, steps, month/day names, `L`, `weekday#nth`, `?`, `@daily`-style macros) and pairs it with an explicit `partition_type` (`daily` / `hourly` / `monthly` / `unpartitioned`), so cadences the presets cannot express — every 15 minutes, weekday mornings only, the last day of the month — still target whole partitions exactly like `daily_at`/`hourly_at`/`monthly_at`, including unpartitioned jobs that simply run once per tick. Expressions are validated up front by a new shared `cron.py` module used by the CLI, the orchestration config, and `meta validate`, rejecting never-firing expressions and warning on oversized steps. Second, **unobserved dbt sources gain lineage visibility and stop blocking eager models**: sources without observe metadata now appear in the asset graph as lineage-only `AssetSpec`s, and `AutomationCondition.eager()` no longer permanently stalls on upstream sources that can never record an event.
+
+### Added
+
+- **Cron schedule type end-to-end:**
+  - New `type: cron` schedules in `dagsterization.yml` with `cron_expression` (required), `partition_type` (`daily|hourly|monthly|unpartitioned`, default `daily`), and the offset/lookback pair matching the chosen granularity (defaults `0` / `1`, same as the presets).
+  - The partition window is derived from the tick time exactly like the presets: `*/15 * * * *` with `partition_type: daily` and `offset_days: 1` runs the previous day's partition on every tick. Cross-granularity offset/lookback fields (e.g. `offset_hours` on a `partition_type: daily` cron schedule) are rejected by validation, the preset, and the schedule factory.
+  - `unpartitioned` cron schedules run the whole job once per tick and must not set any window fields — the first supported unpartitioned schedule type. Each tick returns a plain `RunRequest` with no `run_key`, so later ticks are never deduped away.
+  - Cron expression validation (new `src/dbt_dagsterizer/cron.py`, shared by CLI, config, and `meta validate`): five-field crontab syntax including `*`, lists (`1,15`), ranges (`9-17`), steps (`*/15`, `5/10`), month/day names (`JAN-DEC`, `SUN-SAT`), `L` (last day of month), `weekday#nth` (e.g. `5#2` = second Friday), `?` in the day fields, and `@daily`-style macros. Out-of-range values, wrong field counts, inverted ranges, and never-firing expressions (February 30th) are rejected with errors naming the offending field; steps larger than their field range (`*/90 * * * *`) are accepted with a warning because Dagster normalizes them and fires more often than the step suggests.
+  - CLI: `meta schedule --schedule-type cron --cron-expression "*/15 * * * *" --partition-type daily --offset-days 1`. `--cron-expression` / `--partition-type` are rejected for non-cron schedule types.
+  - Cron schedules execute in the global `timezone` from `dagsterization.yml` (default `UTC`), like the other schedule types.
+  - New docs: Cron Schedule section in `docs/concepts/dagsterization-yml.md`; new flags and a cron example in `docs/concepts/cli.md`.
+  - Test coverage: `tests/test_cron_expression.py` (222 lines), `tests/test_cron_schedules.py` (783 lines), and cron round-trips in `tests/test_cli_meta_generation.py`.
+- **Lineage-only asset specs for unobserved dbt sources.** dbt sources without `meta.luban.observe.*` metadata (and not owned by another code location via `meta.luban.external_code_location`) are now represented by definition-only `AssetSpec`s — no compute function, no partitions, no automation condition — so upstream tables appear in the Dagster asset graph and lineage next to their observable siblings, grouped under the source's `meta.luban.group` (or the default `source` group). Relation keys already produced by a model/seed/snapshot are skipped to avoid duplicate asset definitions.
+
+### Fixed
+
+- **Eager dbt models are no longer permanently blocked by unobserved sources.** `AutomationCondition.eager()` gates on `~any_deps_missing()`, which requires every upstream asset key to have an event record; a dbt source with no asset definition can never record one, so eager models reading such a source never materialized automatically, with no error surfaced. The dbt translator now receives the set of unobserved source keys and scopes the `any_deps_missing` check away from them, so event-driven refresh works off the remaining parents (observable sources still gate until first observation). Applies to all four eager branches (model-name match, propagator `eager` mode, `dim` tag, `automation_table` tag); projects without unobserved sources get the stock `eager()` unchanged.
+
+### Changed
+
+- CLI `meta schedule --minute` is now required only for the preset schedule types (`daily_at`, `hourly_at`, `monthly_at`) and unused for `cron`; `set_schedule()` in `orchestration_config.py` accepts optional `hour`/`minute` plus new `cron_expression` / `partition_type` parameters.
+
+### Upgrade Notes
+
+- No migration is required; existing `daily_at` / `hourly_at` / `monthly_at` schedules are unaffected.
+- Cron schedules need a valid five-field `cron_expression`; use `partition_type` to pick the partition window and set only the matching offset/lookback pair. `unpartitioned` cron schedules must not set any window fields — each tick launches one run of the whole job.
+- `meta schedule --minute` is no longer required when `--schedule-type cron` is used.
+- Eager models (`dim` / `automation_table` / propagator `eager` mode) that were silently waiting on unobserved sources will begin materializing automatically after upgrading.
+
 ## v0.5.3
 
 Release date: 2026-09-08

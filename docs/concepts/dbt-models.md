@@ -224,6 +224,11 @@ Models tagged with `dim` or `automation_table` are automatically materialized wh
 - These models use `AutomationCondition.eager()` to enable event-driven execution
 - No manual schedule or job trigger is needed — the model refreshes automatically when upstream data changes
 
+**Note — models that also read non-observable sources**:
+- A dbt source without any `meta.luban.observe.*` metadata (and not marked `meta.luban.external_code_location`) can never record a materialization or observation event. It still gets a lineage-only source asset (visible in the asset graph and lineage, grouped with the other sources), but nothing can ever materialize or observe it.
+- Such source keys are automatically excluded from the eager condition's upstream-missing check. A tagged model that reads both an observed fact table and a plain lookup/dimension table therefore still refreshes when the observed source detects new data — the plain source no longer blocks it forever.
+- Observable sources keep their normal semantics: the model still waits until each observable upstream source has recorded at least one observation.
+
 **Use cases**:
 - `dim` tag: Slowly changing dimension tables that should refresh when source data arrives
 - `automation_table` tag: Any model that should be event-driven based on observable source data

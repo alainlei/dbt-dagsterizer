@@ -5,6 +5,7 @@ from pathlib import Path
 
 import click
 
+from ..cron import cron_expression_warnings, validate_cron_expression
 from ..dbt.manifest_prepare import (
     load_manifest as load_dbt_manifest,
 )
@@ -388,8 +389,8 @@ def build_meta_group() -> click.Group:
     @click.option("--models", default="", help="Comma-separated model names")
     @click.option("--tag", "tag_", default="", help="Select models by existing dbt tag")
     @click.option("--name", required=True)
-    @click.option("--hour", type=int, default=_HOUR_UNSET, help="Required for --schedule-type daily_at and monthly_at; optional for hourly_at (default 0). Valid 0..23")
-    @click.option("--minute", type=int, required=True)
+    @click.option("--hour", type=int, default=_HOUR_UNSET, help="Required for --schedule-type daily_at and monthly_at; optional for hourly_at (default 0); unused for cron. Valid 0..23")
+    @click.option("--minute", type=int, default=None, help="Required for --schedule-type daily_at, hourly_at and monthly_at; unused for cron. Valid 0..59")
     @click.option("--lookback-days", type=int, default=0, show_default=True)
     @click.option("--offset-days", type=int, default=1, show_default=True)
     @click.option("--lookback-hours", type=int, default=0, show_default=True)
@@ -397,7 +398,14 @@ def build_meta_group() -> click.Group:
     @click.option("--day-of-month", type=int, default=1, show_default=True, help="For monthly_at. Valid 1..28")
     @click.option("--lookback-months", type=int, default=0, show_default=True)
     @click.option("--offset-months", type=int, default=1, show_default=True)
-    @click.option("--schedule-type", type=click.Choice(["daily_at", "hourly_at", "monthly_at"]), default="daily_at", show_default=True)
+    @click.option("--cron-expression", default="", help="Five-field cron expression (e.g. '*/15 * * * *'); required for --schedule-type cron")
+    @click.option(
+        "--partition-type",
+        type=click.Choice(["daily", "hourly", "monthly", "unpartitioned"]),
+        default=None,
+        help="Partition window a cron schedule targets (default daily)",
+    )
+    @click.option("--schedule-type", type=click.Choice(["daily_at", "hourly_at", "monthly_at", "cron"]), default="daily_at", show_default=True)
     @click.option("--enabled/--disabled", default=True, show_default=True)
     @click.option("--prepare/--no-prepare", default=True, show_default=True)
     @click.option("--parse/--no-parse", default=False, show_default=True)
@@ -408,7 +416,7 @@ def build_meta_group() -> click.Group:
         tag_: str,
         name: str,
         hour: int,
-        minute: int,
+        minute: int | None,
         lookback_days: int,
         offset_days: int,
         lookback_hours: int,
@@ -416,18 +424,41 @@ def build_meta_group() -> click.Group:
         day_of_month: int,
         lookback_months: int,
         offset_months: int,
+        cron_expression: str,
+        partition_type: str | None,
         schedule_type: str,
         enabled: bool,
         prepare: bool,
         parse: bool,
     ) -> None:
-        if schedule_type in {"daily_at", "monthly_at"} and hour == _HOUR_UNSET:
-            raise click.ClickException(f"--hour is required when --schedule-type is {schedule_type}")
-        if schedule_type == "hourly_at" and hour == _HOUR_UNSET:
-            hour = 0
-        if hour < 0 or hour > 23:
+        cron_expression_value: str | None = None
+        partition_type_value: str | None = None
+        if schedule_type == "cron":
+            if not cron_expression.strip():
+                raise click.ClickException("--cron-expression is required when --schedule-type is cron")
+            try:
+                cron_expression_value = validate_cron_expression(cron_expression)
+            except ValueError as exc:
+                raise click.ClickException(str(exc)) from exc
+            for warning in cron_expression_warnings(cron_expression_value):
+                click.echo(f"WARN: {warning}")
+            partition_type_value = partition_type or "daily"
+        else:
+            if cron_expression.strip():
+                raise click.ClickException("--cron-expression requires --schedule-type cron")
+            if partition_type:
+                raise click.ClickException("--partition-type is only valid with --schedule-type cron")
+            if schedule_type in {"daily_at", "monthly_at"} and hour == _HOUR_UNSET:
+                raise click.ClickException(f"--hour is required when --schedule-type is {schedule_type}")
+            if schedule_type == "hourly_at" and hour == _HOUR_UNSET:
+                hour = 0
+            if minute is None:
+                raise click.ClickException(f"--minute is required when --schedule-type is {schedule_type}")
+
+        hour_value = None if hour == _HOUR_UNSET else hour
+        if hour_value is not None and (hour_value < 0 or hour_value > 23):
             raise click.ClickException("--hour must be 0..23")
-        if minute < 0 or minute > 59:
+        if minute is not None and (minute < 0 or minute > 59):
             raise click.ClickException("--minute must be 0..59")
         if lookback_days < 0:
             raise click.ClickException("--lookback-days must be >= 0")
@@ -473,7 +504,7 @@ def build_meta_group() -> click.Group:
             name=name,
             job_name=schedule_job_name,
             schedule_type=schedule_type,
-            hour=hour,
+            hour=hour_value,
             minute=minute,
             lookback_days=lookback_days,
             offset_days=offset_days,
@@ -483,6 +514,8 @@ def build_meta_group() -> click.Group:
             lookback_months=lookback_months,
             offset_months=offset_months,
             enabled=enabled,
+            cron_expression=cron_expression_value,
+            partition_type=partition_type_value,
         )
         save_orchestration_with_validation(target=target, data=data, dbt_project_dir=dbt_project_path, prepare=prepare)
         if parse:

@@ -7,6 +7,7 @@ from typing import Any
 
 import click
 
+from ..cron import cron_expression_warnings, validate_cron_expression
 from ..dbt.manifest_prepare import load_manifest, manifest_path
 from ..orchestration_config import index as index_orch
 from ..orchestration_config import normalize_timezone
@@ -18,6 +19,23 @@ from .common import existing_model_names
 class ValidationIssue:
     level: str
     message: str
+
+
+# Offset/lookback fields each schedule granularity is allowed to carry.
+_SCHEDULE_OFFSET_FIELDS_BY_PARTITION = {
+    "daily": ("lookback_days", "offset_days"),
+    "hourly": ("lookback_hours", "offset_hours"),
+    "monthly": ("lookback_months", "offset_months"),
+    "unpartitioned": (),
+}
+_ALL_SCHEDULE_OFFSET_FIELDS = (
+    "lookback_days",
+    "offset_days",
+    "lookback_hours",
+    "offset_hours",
+    "lookback_months",
+    "offset_months",
+)
 
 
 def validate_orchestration(
@@ -151,8 +169,8 @@ def validate_orchestration(
             if not isinstance(schedule_cfg, dict):
                 issues.append(ValidationIssue("error", f"schedules.{name} must be a mapping"))
                 continue
-            if schedule_cfg.get("type") not in {"daily_at", "hourly_at", "monthly_at"}:
-                issues.append(ValidationIssue("error", f"schedules.{name}.type must be 'daily_at', 'hourly_at' or 'monthly_at'"))
+            if schedule_cfg.get("type") not in {"daily_at", "hourly_at", "monthly_at", "cron"}:
+                issues.append(ValidationIssue("error", f"schedules.{name}.type must be 'daily_at', 'hourly_at', 'monthly_at' or 'cron'"))
             job_name = schedule_cfg.get("job_name")
             if not isinstance(job_name, str) or not job_name.strip():
                 issues.append(ValidationIssue("error", f"schedules.{name}.job_name must be non-empty"))
@@ -160,6 +178,48 @@ def validate_orchestration(
                 issues.append(ValidationIssue("error", f"schedules.{name}.job_name '{job_name.strip()}' not found"))
 
             schedule_type = schedule_cfg.get("type")
+            if schedule_type == "cron":
+                cron_expression = schedule_cfg.get("cron_expression")
+                if not isinstance(cron_expression, str) or not cron_expression.strip():
+                    issues.append(ValidationIssue("error", f"schedules.{name}.cron_expression must be non-empty (required for cron)"))
+                else:
+                    try:
+                        validate_cron_expression(cron_expression)
+                    except ValueError as exc:
+                        issues.append(ValidationIssue("error", f"schedules.{name}.cron_expression is invalid: {exc}"))
+                    else:
+                        for warning in cron_expression_warnings(cron_expression):
+                            issues.append(ValidationIssue("warn", f"schedules.{name}: {warning}"))
+
+                cron_partition_type = schedule_cfg.get("partition_type", "daily")
+                if cron_partition_type not in _SCHEDULE_OFFSET_FIELDS_BY_PARTITION:
+                    issues.append(
+                        ValidationIssue(
+                            "error",
+                            f"schedules.{name}.partition_type must be daily|hourly|monthly|unpartitioned",
+                        )
+                    )
+                else:
+                    allowed_fields = _SCHEDULE_OFFSET_FIELDS_BY_PARTITION[cron_partition_type]
+                    for field_name in _ALL_SCHEDULE_OFFSET_FIELDS:
+                        if field_name in allowed_fields:
+                            continue
+                        if schedule_cfg.get(field_name) not in (None, 0):
+                            issues.append(
+                                ValidationIssue(
+                                    "error",
+                                    f"schedules.{name}: cron schedule with partition_type '{cron_partition_type}' "
+                                    f"cannot set {field_name}",
+                                )
+                            )
+                    for field_name in allowed_fields:
+                        value = schedule_cfg.get(field_name)
+                        if value is None:
+                            continue
+                        if not isinstance(value, int) or value < 0:
+                            issues.append(ValidationIssue("error", f"schedules.{name}.{field_name} must be >= 0"))
+                continue
+
             hour = schedule_cfg.get("hour")
             minute = schedule_cfg.get("minute")
             if not isinstance(minute, int) or minute < 0 or minute > 59:
@@ -528,8 +588,22 @@ def validate_orchestration_structure(*, orchestration: dict[str, Any]) -> list[V
             if not isinstance(cfg, dict):
                 issues.append(ValidationIssue("error", f"schedules.{name} must be a mapping"))
                 continue
-            if cfg.get("type") not in {"daily_at", "hourly_at", "monthly_at"}:
-                issues.append(ValidationIssue("error", f"schedules.{name}.type must be 'daily_at', 'hourly_at' or 'monthly_at'"))
+            schedule_type = cfg.get("type")
+            if schedule_type not in {"daily_at", "hourly_at", "monthly_at", "cron"}:
+                issues.append(ValidationIssue("error", f"schedules.{name}.type must be 'daily_at', 'hourly_at', 'monthly_at' or 'cron'"))
+            elif schedule_type == "cron":
+                cron_expression = cfg.get("cron_expression")
+                if not isinstance(cron_expression, str) or not cron_expression.strip():
+                    issues.append(ValidationIssue("error", f"schedules.{name}.cron_expression must be non-empty (required for cron)"))
+                else:
+                    try:
+                        validate_cron_expression(cron_expression)
+                    except ValueError as exc:
+                        issues.append(ValidationIssue("error", f"schedules.{name}.cron_expression is invalid: {exc}"))
+                if cfg.get("partition_type", "daily") not in _SCHEDULE_OFFSET_FIELDS_BY_PARTITION:
+                    issues.append(
+                        ValidationIssue("error", f"schedules.{name}.partition_type must be daily|hourly|monthly|unpartitioned")
+                    )
             job_name = cfg.get("job_name")
             if not isinstance(job_name, str) or not job_name.strip():
                 issues.append(ValidationIssue("error", f"schedules.{name}.job_name must be non-empty"))

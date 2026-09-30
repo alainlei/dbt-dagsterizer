@@ -1,8 +1,14 @@
 def get_assets():
     from .dbt.assets import get_dbt_assets
     from .replication import get_replication_assets
-    from .sources.automation import load_filtered_observable_sources
-    from .sources.factory import build_observable_source_assets
+    from .sources.automation import (
+        load_filtered_observable_sources,
+        load_unobserved_source_specs,
+    )
+    from .sources.factory import (
+        build_observable_source_assets,
+        build_unobserved_source_assets,
+    )
     from .ssrs.auto_config import build_auto_ssrs_report_specs
     from .ssrs.factory import build_ssrs_report_assets
     from .version_info import build_version_info_asset
@@ -13,6 +19,9 @@ def get_assets():
         dbt_assets=dbt_assets,
         source_specs=load_filtered_observable_sources(),
     )
+    unobserved_source_assets = build_unobserved_source_assets(
+        specs=load_unobserved_source_specs(),
+    )
     ssrs_report_assets = build_ssrs_report_assets(specs=build_auto_ssrs_report_specs())
     replication_assets = get_replication_assets()
 
@@ -22,6 +31,7 @@ def get_assets():
         (dbt_assets if isinstance(dbt_assets, list) else [dbt_assets])
        
         + observable_source_assets
+        + unobserved_source_assets
         + replication_assets
     )
         + ssrs_report_assets

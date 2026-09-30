@@ -6,6 +6,7 @@ from typing import Any
 
 from ...resources.dbt import get_dbt_project_dir
 from ..dbt.prepare import prepare_manifest_if_missing
+from ..dbt.translator import relation_asset_key_path
 
 
 def _manifest_path() -> Path:
@@ -136,3 +137,104 @@ def load_filtered_observable_sources() -> list[dict[str, str | None]]:
         if (str(s.get("source") or ""), str(s.get("name") or s.get("table") or ""))
         not in external_pairs
     ]
+
+
+def _materializing_node_key_paths(manifest: dict[str, Any]) -> set[tuple[str, ...]]:
+    """Return relation-based key paths for dbt models/seeds/snapshots in the manifest.
+
+    Used to skip lineage-only source specs whose key is already claimed by a real
+    (materializable) dbt asset, which would otherwise produce duplicate asset
+    definitions at load time.  The key for each node is built with the same
+    ``identifier or name`` formula the translator uses for every dbt resource.
+    """
+    key_paths: set[tuple[str, ...]] = set()
+    for props in (manifest.get("nodes") or {}).values():
+        if not isinstance(props, dict):
+            continue
+        if props.get("resource_type") not in ("model", "seed", "snapshot"):
+            continue
+        if (props.get("config") or {}).get("materialized") == "ephemeral":
+            continue
+        key_paths.add(
+            tuple(
+                relation_asset_key_path(
+                    database=str(props.get("database") or ""),
+                    schema=str(props.get("schema") or ""),
+                    identifier=str(props.get("identifier") or props.get("name") or ""),
+                )
+            )
+        )
+    return key_paths
+
+
+def load_unobserved_source_specs() -> list[dict[str, Any]]:
+    """Load specs for source tables that can never emit Dagster events.
+
+    Only sources with observe metadata (``meta.luban.observe.watermark_column`` /
+    ``watermark_sql``) or an ``meta.luban.external_code_location`` marker get an
+    observable/materializable asset definition (here or in another code location).
+    Every other source table is returned here so that ``build_unobserved_source_assets``
+    can give it a lineage-only AssetSpec: without one the key exists in the asset
+    graph only as a bare dependency node, and it can never record a materialization
+    or observation event.
+
+    Sources whose relation key is already produced by a dbt model/seed/snapshot are
+    skipped to avoid duplicate asset definitions.
+
+    Each returned dict contains ``source``, ``table`` (physical identifier),
+    ``name`` (logical dbt name), ``key_path`` (relation-based AssetKey path), and
+    ``group`` (from ``meta.luban.group``, table-level first, then source-level).
+    """
+    prepare_manifest_if_missing()
+    with _manifest_path().open("r", encoding="utf-8") as f:
+        manifest = json.load(f)
+
+    observable_pairs = {
+        (str(spec.get("source") or ""), str(spec.get("name") or spec.get("table") or ""))
+        for spec in load_automation_observable_sources()
+    }
+    external_pairs = load_external_source_names()
+    node_key_paths = _materializing_node_key_paths(manifest)
+
+    specs: list[dict[str, Any]] = []
+    for props in (manifest.get("sources") or {}).values():
+        if not isinstance(props, dict):
+            continue
+        source_name = props.get("source_name")
+        dbt_name = props.get("name")
+        if not source_name or not dbt_name:
+            continue
+        pair = (str(source_name), str(dbt_name))
+        if pair in observable_pairs or pair in external_pairs:
+            continue
+        identifier = str(props.get("identifier") or dbt_name)
+        key_path = relation_asset_key_path(
+            database=str(props.get("database") or ""),
+            schema=str(props.get("schema") or ""),
+            identifier=identifier,
+        )
+        if tuple(key_path) in node_key_paths:
+            continue
+        group = _extract_group_from_meta(props.get("meta"))
+        if group is None:
+            group = _extract_group_from_meta(props.get("source_meta"))
+        specs.append(
+            {
+                "source": str(source_name),
+                "table": identifier,
+                "name": str(dbt_name),
+                "key_path": key_path,
+                "group": str(group) if group is not None else None,
+            }
+        )
+
+    return sorted(specs, key=lambda s: (s["source"], s["table"]))
+
+
+def load_unobserved_source_key_paths() -> list[list[str]]:
+    """Return relation-based AssetKey paths for source tables that can never emit events.
+
+    Thin wrapper around ``load_unobserved_source_specs`` for callers that only need
+    the keys (e.g. scoping the eager condition's ``any_deps_missing`` gate).
+    """
+    return sorted(spec["key_path"] for spec in load_unobserved_source_specs())

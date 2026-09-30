@@ -327,7 +327,7 @@ schedules:
 ```
 
 **Fields**:
-- `type`: Schedule type (`daily_at`, `hourly_at` or `monthly_at`)
+- `type`: Schedule type (`daily_at`, `hourly_at`, `monthly_at` or `cron`)
 - `job_name`: Target job name (required)
 - `hour`: Hour of day (0-23)
 - `minute`: Minute of hour (0-59)
@@ -418,6 +418,49 @@ dbt-dagsterizer meta schedule \
   --minute 0 \
   --lookback-months 0 \
   --offset-months 1 \
+  --enabled
+```
+
+### Cron Schedule
+
+Use `type: cron` when the built-in presets are not flexible enough, for example to run every 15 minutes or only on weekday mornings.
+
+```yaml
+schedules:
+  orders_every_15min:
+    type: cron
+    job_name: dbt_orders_asset_job
+    cron_expression: "*/15 * * * *"
+    partition_type: daily
+    lookback_days: 0
+    offset_days: 1
+    enabled: true
+```
+
+**Fields**:
+- `type`: Schedule type (`cron`)
+- `job_name`: Target job name (required)
+- `cron_expression`: Five-field cron expression `minute hour day-of-month month day-of-week` (required). Standard crontab syntax is supported: `*`, lists (`1,15`), ranges (`9-17`), steps (`*/15`, `5/10`), month/day names (`JAN-DEC`, `SUN-SAT`), `L` (last day of the month), `weekday#nth` (e.g. `5#2` = second Friday), `?` in the day fields, and macros (`@daily`, `@hourly`, `@weekly`, `@monthly`, `@yearly`). Out-of-range values (e.g. `60 * * * *`), wrong field counts, and expressions that can never fire (e.g. February 30th) are rejected.
+- `partition_type`: Partition window the schedule targets (`daily`, `hourly`, `monthly`, `unpartitioned`; default: `daily`)
+- `lookback_days` / `offset_days`: Daily window (only for `partition_type: daily`; defaults 0 / 1)
+- `lookback_hours` / `offset_hours`: Hourly window (only for `partition_type: hourly`; defaults 0 / 1)
+- `lookback_months` / `offset_months`: Monthly window (only for `partition_type: monthly`; defaults 0 / 1)
+- `enabled`: Whether schedule is active (default: `true`)
+
+The partition window is derived from the tick time exactly like the presets, so a `*/15 * * * *` schedule with `partition_type: daily` and `offset_days: 1` runs the previous day's partition on every tick. Offset/lookback fields belonging to another granularity are rejected, and `unpartitioned` schedules must not set any window fields — each tick simply launches one run. A step larger than its field range (e.g. `*/90 * * * *`) is accepted with a warning, mirroring Dagster, which normalizes it and fires more often than the step suggests.
+
+Custom cron expressions run in the timezone configured at the top of `dagsterization.yml` (default: `UTC`), exactly like the other schedule types.
+
+**CLI equivalent**:
+```bash
+dbt-dagsterizer meta schedule \
+  --models orders \
+  --name orders_every_15min \
+  --schedule-type cron \
+  --cron-expression "*/15 * * * *" \
+  --partition-type daily \
+  --lookback-days 0 \
+  --offset-days 1 \
   --enabled
 ```
 
