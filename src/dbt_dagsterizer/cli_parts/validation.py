@@ -36,6 +36,75 @@ _ALL_SCHEDULE_OFFSET_FIELDS = (
     "lookback_months",
     "offset_months",
 )
+# Full recognized-key set per schedule type.  Unknown keys (including typos
+# such as "lookback_hr" for "lookback_hours") are reported as errors so users
+# cannot silently lose a configuration value.
+_SCHEDULE_KNOWN_KEYS_BY_TYPE: dict[str, frozenset[str]] = {
+    "cron": frozenset(
+        {
+            "type",
+            "job_name",
+            "enabled",
+            "cron_expression",
+            "partition_type",
+            "timezone",
+            "dedupe_across_ticks",
+        }
+        | set(_ALL_SCHEDULE_OFFSET_FIELDS)
+    ),
+    "daily_at": frozenset(
+        {
+            "type",
+            "job_name",
+            "enabled",
+            "hour",
+            "minute",
+            "timezone",
+            "dedupe_across_ticks",
+            "lookback_days",
+            "offset_days",
+            "lookback_hours",
+            "offset_hours",
+            "lookback_months",
+            "offset_months",
+        }
+    ),
+    "hourly_at": frozenset(
+        {
+            "type",
+            "job_name",
+            "enabled",
+            "hour",
+            "minute",
+            "timezone",
+            "dedupe_across_ticks",
+            "lookback_days",
+            "offset_days",
+            "lookback_hours",
+            "offset_hours",
+            "lookback_months",
+            "offset_months",
+        }
+    ),
+    "monthly_at": frozenset(
+        {
+            "type",
+            "job_name",
+            "enabled",
+            "hour",
+            "minute",
+            "day_of_month",
+            "timezone",
+            "dedupe_across_ticks",
+            "lookback_days",
+            "offset_days",
+            "lookback_hours",
+            "offset_hours",
+            "lookback_months",
+            "offset_months",
+        }
+    ),
+}
 
 
 def validate_orchestration(
@@ -178,6 +247,21 @@ def validate_orchestration(
                 issues.append(ValidationIssue("error", f"schedules.{name}.job_name '{job_name.strip()}' not found"))
 
             schedule_type = schedule_cfg.get("type")
+            # Report any keys we do not recognize early (catches typos such as
+            # "lookback_hr" for "lookback_hours" that would otherwise be
+            # silently ignored by the whitelist-based get() loops below).
+            if isinstance(schedule_type, str) and schedule_type in _SCHEDULE_KNOWN_KEYS_BY_TYPE:
+                known_keys = _SCHEDULE_KNOWN_KEYS_BY_TYPE[schedule_type]
+                extras = sorted(k for k in schedule_cfg.keys() if k not in known_keys)
+                for extra in extras:
+                    issues.append(
+                        ValidationIssue(
+                            "error",
+                            f"schedules.{name}: '{schedule_type}' schedules do not recognize "
+                            f"field '{extra}'. Known fields are: "
+                            f"{sorted(known_keys)}",
+                        )
+                    )
             if schedule_type == "cron":
                 cron_expression = schedule_cfg.get("cron_expression")
                 if not isinstance(cron_expression, str) or not cron_expression.strip():
@@ -603,6 +687,18 @@ def validate_orchestration_structure(*, orchestration: dict[str, Any]) -> list[V
                 if cfg.get("partition_type", "daily") not in _SCHEDULE_OFFSET_FIELDS_BY_PARTITION:
                     issues.append(
                         ValidationIssue("error", f"schedules.{name}.partition_type must be daily|hourly|monthly|unpartitioned")
+                    )
+            if isinstance(schedule_type, str) and schedule_type in _SCHEDULE_KNOWN_KEYS_BY_TYPE:
+                known_keys = _SCHEDULE_KNOWN_KEYS_BY_TYPE[schedule_type]
+                extras = sorted(k for k in cfg.keys() if k not in known_keys)
+                for extra in extras:
+                    issues.append(
+                        ValidationIssue(
+                            "error",
+                            f"schedules.{name}: '{schedule_type}' schedules do not recognize "
+                            f"field '{extra}'. Known fields are: "
+                            f"{sorted(known_keys)}",
+                        )
                     )
             job_name = cfg.get("job_name")
             if not isinstance(job_name, str) or not job_name.strip():

@@ -240,9 +240,16 @@ def validate_cron_expression(expression: str) -> str:
         for dom in sorted(dom_set):
             impossible_months: list[int] = []
             for month in months:
+                # February dom=29 is technically valid (fires in leap years),
+                # even though _MONTH_MAX_DOM[2] = 28 is the non-leap floor.  It
+                # has its own warning path in cron_expression_warnings() so the
+                # user still sees diagnostics for the ~3-year stall. Skip the
+                # cross-product check for this specific combo only.
+                if month == 2 and dom == 29:
+                    continue
                 if dom > _MONTH_MAX_DOM[month]:
                     impossible_months.append(month)
-            if len(impossible_months) == len(months):
+            if impossible_months and len(impossible_months) == len(months):
                 failing_doms[dom] = impossible_months
         if failing_doms:
             dom, impossible_months = next(iter(failing_doms.items()))
@@ -259,6 +266,13 @@ def cron_expression_warnings(expression: str) -> list[str]:
 
     A step larger than the field range (e.g. '*/90 * * * *') makes Dagster fire
     more often than the step suggests, which is a common source of surprise.
+
+    A pure-February dom=29 expression (e.g. '0 0 29 2 *') technically fires in
+    leap years but silently skips the ~3 non-leap years in between; callers
+    that depend on a yearly cadence usually expect dom=28 (fires every year) or
+    an explicit month list such as '29 1,2,3 * *' (last-day-of-month presets
+    and L tokens are intentionally not warned on because they produce a valid
+    date every year).
     """
     normalized = _normalize(expression)
     if not normalized or normalized.startswith("@"):
@@ -268,6 +282,19 @@ def cron_expression_warnings(expression: str) -> list[str]:
         return []
 
     warnings: list[str] = []
+    # Pure-February dom=29 fires only every leap year (≈ silent 3-year stall).
+    # Run before the never-fire guards so that dom>=30 raises its ValueError and
+    # this warning is never emitted together with it.
+    dom_set = _dom_values(fields[2])
+    months = _parse_field(fields[3], _FIELDS[3])
+    if dom_set is not None and months == [2] and 29 in dom_set:
+        warnings.append(
+            f"cron expression '{normalized}' uses day-of-month 29 with month "
+            "February only; it fires only in leap years, which is approximately "
+            "once every four years.  Consider day 28 (fires every year) or "
+            "combining February with adjacent months (e.g. '29 1,2,3 * *') "
+            "for a more regular cadence."
+        )
     for raw_field, spec in zip(fields, _FIELDS):
         for token in raw_field.split(","):
             _, step_separator, step_text = token.partition("/")
