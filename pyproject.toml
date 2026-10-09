@@ -15,7 +15,9 @@ dependencies = [
     "pymssql>=2.3",
     "pymysql>=1.1.0",
     "ruamel-yaml>=0.19.1",
-    "grpcio==1.81.1"
+    "grpcio==1.81.1",
+    "psycopg2-binary",
+    "sqlalchemy==2.0.54"
 ]
 
 [tool.hatch.build.targets.wheel]
