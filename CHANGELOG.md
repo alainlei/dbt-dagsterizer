@@ -4,6 +4,23 @@ All notable changes to `dbt-dagsterizer` will be documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [0.5.5] - 2026-10-09
+
+### Added
+
+- **Explicit `sqlalchemy` dependency declaration with the 2.1 breaking-change surface pinned out.** Before this release, `sqlalchemy` was an implicit transitive dependency of `dlt[mssql]`, meaning users could unknowingly install `sqlalchemy>=2.1.0` (released 2026-Q4) and hit runtime errors in the replication executor code paths that use `sa.create_engine()` directly. `sqlalchemy` is now a declared first-class dependency pinned to `>=2.0.54,<2.1`, so downstream projects cannot accidentally resolve 2.1.0+ until the executor's engine construction is tested with the new SQLAlchemy API surface.
+- **Explicit `pyodbc>=5.0.0` driver dependency declaration for both the main package and the starrocks code-location template.** The replication executor's partition-replace disposition path (`assets/replication/executor.py:L139-L157`) calls `sa.create_engine()` with the `mssql+pyodbc://` dialect URL (replacing the dlt-style `mssql://` prefix explicitly), and `resources/mssql.py` (`SqlServerClient.connection_string()`) hardcodes the same `mssql+pyodbc://` scheme. Neither `pymssql` (already declared in `pyproject.toml`) nor `dlt[mssql]` transitively guarantees the DBAPI module `import pyodbc` is available; users running partitioned replication with `write_disposition: replace` previously could raise `sqlalchemy.exc.NoSuchModuleError: Can't load plugin: sqlalchemy.dialects:mssql.pyodbc` unless pyodbc was installed by coincidence. It is now a direct declared dependency in both the main package and the cookiecutter template.
+
+### Fixed
+
+- **Wrong-DB driver dependency removed: `psycopg2-binary` was incorrectly added by PR #13.** A codebase-wide search for PostgreSQL URL strings or psycopg driver usage in `src/` and `tests/` produced zero hits: the replication executor uses only `mysql+pymysql://` (StarRocks source) and `mssql+pyodbc://` (SQL Server destination), and the only `dagster-postgres` mention in the template is the Dagster storage-backend package, not a libpq DB driver. Adding psycopg2-binary to the dependency set would have forced every StarRocks/MSSQL user to carry an unused native PostgreSQL build burden (libpq + compiler toolchain on musl / macOS / manylinux). Removed the single offending line from `pyproject.toml`.
+- **Overly tight exact pin `sqlalchemy==2.0.54` relaxed to `>=2.0.54,<2.1`.** The author's stated intent was to pin out the 2.1.0+ breaking surface, which is correctly achieved by the `<2.1` ceiling. Using an exact `==` pin blocked downstream uptake of all 2.0.x patch releases newer than `.54`, including security bug fixes that are semver-compatible per SQLAlchemy's stability guarantees. The range pin preserves the author's intent while letting downstream projects receive 2.0.55+.
+- **StarRocks code-location template `pyproject.toml.in` propagated the same two review fixes.** The cookiecutter template's runtime deps now use `sqlalchemy>=2.0.54,<2.1` (same shape as the main package and consistent with the template's other range-pinned runtime deps such as `dbt-core>=1.9,<2`, `dbt-starrocks>=1.9,<2`, `dlt[mssql]>=1.0`) and add `pyodbc>=5.0.0` so every generated project has the correct DB driver for the `mssql+pyodbc://` URLs used in replication.
+
+### Changed
+
+- The starrocks template's `pyproject.toml.in` runtime dependency list grew by one direct dep (`pyodbc>=5.0.0`) and the sqlalchemy exact pin was replaced with a range pin, bringing the template's dep declaration shape into alignment with the main package's corrected shape. No template-rendered file content changes otherwise — the cookiecutter variable layout and generated `definitions.py` / `dagsterization.yml` content are unchanged.
+
 ## [0.5.4] - 2026-10-01
 
 ### Added

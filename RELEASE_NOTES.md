@@ -7,6 +7,35 @@ These notes are intended to be a polished companion to `CHANGELOG.md`:
 - `CHANGELOG.md` remains the cumulative project history.
 - This document provides concise, version-by-version release summaries that are easy to reuse for GitHub Releases and upgrade communication.
 
+## v0.5.5
+
+Release date: 2026-10-09
+
+### Summary
+
+`v0.5.5` is a dependency-hardening patch release on top of `v0.5.4`, prompted by a user-reported runtime breakage triggered when `sqlalchemy 2.1.0` (released 2026-Q4) began resolving from the formerly implicit `dlt[mssql]` transitive dep. PR #13 makes sqlalchemy an explicit first-class dep pinned out of the 2.1 breaking-change surface and adds the correct DB driver for our code paths. Three release-review hardening fixes landed on top of PR #13 before merging: (1) a wrong-DB `psycopg2-binary` driver added by the PR was removed (0 Postgres URLs exist anywhere in the tree; we only use `mysql+pymysql://` for StarRocks and `mssql+pyodbc://` for SQL Server); (2) the PR's overly-tight exact pin `sqlalchemy==2.0.54` was relaxed to `>=2.0.54,<2.1` so downstream projects still get 2.0.x security/bug patches while remaining protected from 2.1.0; and (3) the previously missing direct dep `pyodbc>=5.0.0` is now declared in both the main package and the starrocks code-location cookiecutter template — it was required by the `mssql+pyodbc://` SQLAlchemy URLs used directly by `assets/replication/executor.py` partition-replace paths and `resources/mssql.connection_string()`.
+
+### Added
+
+- **Explicit `sqlalchemy>=2.0.54,<2.1` dep in both main package and starrocks template.** No longer purely implicit via `dlt[mssql]`, which could resolve to `>=2.1.0` once that API-breaking version is released. The explicit ceiling guarantees the replication executor's direct `sa.create_engine()` / `sa.text()` call sites stay pinned to a 2.0.x patch series where their behavior is known-good.
+- **Explicit `pyodbc>=5.0.0` DBAPI driver dep in both main package and template.** Two independent code paths construct `mssql+pyodbc://` dialect URLs for SQLAlchemy: (a) partitioned replication disposition=replace at `assets/replication/executor.py` — `sa.create_engine(mssql_credentials.replace("mssql://", "mssql+pyodbc://"))`; and (b) `resources/mssql.SqlServerClient.connection_string()` which hardcodes `mssql+pyodbc://`. Without this dep, users running partitioned replication with `write_disposition: replace` could get `NoSuchModuleError: Can't load plugin: sqlalchemy.dialects:mssql.pyodbc` because `pymssql>=2.3` (which was declared) is a different driver and cannot load the pyodbc dialect plugin.
+
+### Fixed
+
+- **Wrong-DB `psycopg2-binary` dependency removed from main `pyproject.toml`.** Zero PostgreSQL driver URLs exist anywhere in `src/` or `tests/`: replication uses only `mysql+pymysql://` (StarRocks source) and `mssql+pyodbc://` (SQL Server destination), and `dagster-postgres` in the template is a Dagster storage-backend integration package, not a psycopg2 DB driver. Removing this line avoids an unnecessary libpq native-build burden for all StarRocks/MSSQL users.
+- **Exact `sqlalchemy==2.0.54` pin relaxed to `>=2.0.54,<2.1`.** The author's stated goal of avoiding the 2.1.0 breaking surface is fully served by the `<2.1` upper bound; using an exact `==` blocked downstream uptake of 2.0.x security/bug patches that are semver-stable per SQLAlchemy's guarantees. Range pin applied to both `pyproject.toml` and the starrocks cookiecutter template `pyproject.toml.in`.
+
+### Changed
+
+- StarRocks code-location template `pyproject.toml.in`: runtime deps now include `pyodbc>=5.0.0` and use `sqlalchemy>=2.0.54,<2.1` instead of the exact pin, matching the corrected shape of the main package deps. Other template content (cookiecutter variables, generated `definitions.py`, generated `dagsterization.yml`, dev deps, build backend) is unchanged.
+
+### Upgrade Notes
+
+- No configuration or dagsterization.yml migration required. Version bump `0.5.4→0.5.5` can be dropped in directly.
+- Users who already manually added a `sqlalchemy<2.1` pin or added a `pyodbc` direct dep to work around the 2.1.0 breakage can now remove those local overrides — they are covered by the package's declared deps.
+- **Dependency change notice:** if your project previously had no explicit `pyodbc` dep declared (because it was getting pulled in coincidentally), nothing changes at runtime — but a new binary wheel for pyodbc will now be installed by uv/pip. Users on macOS with a homebrew-installed unixODBC may need to ensure unixODBC is reachable for pyodbc's build (`brew install unixodbc`) when wheels are unavailable for a given macOS/arch combination.
+- Users still running partitioned replication with `write_disposition: replace` that previously crashed with `NoSuchModuleError` when the `mssql+pyodbc` dialect was missing: the crash no longer occurs on install of v0.5.5 because the correct driver is declared.
+
 ## v0.5.4
 
 Release date: 2026-10-01
