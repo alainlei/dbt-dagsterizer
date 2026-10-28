@@ -1,10 +1,53 @@
 """Tests for StarRocks row count querying."""
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import Mock
 
+import pytest
+
 from dbt_dagsterizer.dbt.row_counts import get_row_counts_from_starrocks
-from dbt_dagsterizer.resources.starrocks import StarRocksClient
+from dbt_dagsterizer.env_utils import dotenv_overrides_for_dbt_project, temporary_env
+from dbt_dagsterizer.resources.starrocks import StarRocksClient, make_starrocks_resource
+
+
+@pytest.mark.parametrize(
+    ("dotenv_text", "existing_timeout", "expected_timeout"),
+    [
+        ("", None, 10),
+        ("STARROCKS_CONNECT_TIMEOUT=30\n", None, 30),
+        ("STARROCKS_CONNECT_TIMEOUT=30\n", "60", 60),
+    ],
+)
+def test_starrocks_connect_timeout(
+    tmp_path: Path, monkeypatch, dotenv_text, existing_timeout, expected_timeout
+):
+    monkeypatch.delenv("STARROCKS_CONNECT_TIMEOUT", raising=False)
+    if existing_timeout is not None:
+        monkeypatch.setenv("STARROCKS_CONNECT_TIMEOUT", existing_timeout)
+    (tmp_path / ".env").write_text(dotenv_text, encoding="utf-8")
+    mock_connect = Mock()
+    monkeypatch.setattr("pymysql.connect", mock_connect)
+
+    overrides = dotenv_overrides_for_dbt_project(dbt_project_dir=tmp_path / "dbt_project")
+    with temporary_env(overrides):
+        client = make_starrocks_resource()
+
+    assert client.connect_timeout == expected_timeout
+    with client._connection() as connection:
+        assert connection is mock_connect.return_value
+
+    mock_connect.assert_called_once_with(
+        host=client.host,
+        port=client.port,
+        user=client.user,
+        password=client.password,
+        connect_timeout=expected_timeout,
+        read_timeout=expected_timeout,
+        write_timeout=expected_timeout,
+        autocommit=True,
+    )
+    mock_connect.return_value.close.assert_called_once_with()
 
 
 def test_get_row_counts_from_starrocks():

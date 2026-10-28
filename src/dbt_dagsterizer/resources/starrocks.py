@@ -61,4 +61,5 @@ def make_starrocks_resource() -> StarRocksClient:
         port=int(os.getenv("STARROCKS_PORT", "9030")),
         user=os.getenv("STARROCKS_USER", "root"),
         password=os.getenv("STARROCKS_PASSWORD", ""),
+        connect_timeout=int(os.getenv("STARROCKS_CONNECT_TIMEOUT", "10")),
     )
