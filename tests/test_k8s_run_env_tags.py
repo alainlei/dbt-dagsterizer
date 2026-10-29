@@ -6,7 +6,7 @@ import dagster as dg
 import pytest
 
 from dbt_dagsterizer.jobs.dbt.factory import build_dbt_asset_jobs
-from dbt_dagsterizer.jobs.sources.jobs import get_observe_sources_job
+from dbt_dagsterizer.jobs.sources.jobs import get_observe_sources_jobs
 
 
 def _get_dbt_asset_job_tags(*, monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
@@ -50,7 +50,9 @@ def test_dbt_asset_job_no_injection_when_unset(monkeypatch: pytest.MonkeyPatch):
     assert "dagster-k8s/config" not in tags
 
 
-def test_dbt_asset_job_does_not_override_existing_dagster_k8s_config(monkeypatch: pytest.MonkeyPatch):
+def test_dbt_asset_job_does_not_override_existing_dagster_k8s_config(
+    monkeypatch: pytest.MonkeyPatch,
+):
     monkeypatch.setenv("LUBAN_RUN_ENV_CONFIGMAP", "my-config")
     monkeypatch.delenv("LUBAN_RUN_ENV_SECRET", raising=False)
 
@@ -67,9 +69,10 @@ def test_dbt_asset_job_does_not_override_existing_dagster_k8s_config(monkeypatch
     assert jobs["my_job"].tags["dagster-k8s/config"] == '{"container_config": {"envFrom": []}}'
 
 
-def test_observe_sources_job_injects_tags(monkeypatch: pytest.MonkeyPatch):
+def test_observe_sources_jobs_inject_tags(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("LUBAN_RUN_ENV_CONFIGMAP", "my-config")
     monkeypatch.delenv("LUBAN_RUN_ENV_SECRET", raising=False)
+    monkeypatch.setenv("LUBAN_OBSERVE_SOURCES_BATCH_SIZE", "2")
 
     monkeypatch.setattr("dbt_dagsterizer.assets.dbt.assets.get_dbt_assets", lambda: None)
     monkeypatch.setattr(
@@ -78,10 +81,11 @@ def test_observe_sources_job_injects_tags(monkeypatch: pytest.MonkeyPatch):
     )
     monkeypatch.setattr(
         "dbt_dagsterizer.assets.sources.factory.build_observable_source_assets",
-        lambda **_: [dg.AssetKey("obs")],
+        lambda **_: [dg.AssetKey(f"obs_{i}") for i in range(5)],
     )
 
-    job = get_observe_sources_job()
-    assert job is not None
-    payload = json.loads(job.tags["dagster-k8s/config"])
-    assert payload["container_config"]["envFrom"] == [{"configMapRef": {"name": "my-config"}}]
+    jobs = get_observe_sources_jobs()
+    assert len(jobs) == 3
+    for job in jobs:
+        payload = json.loads(job.tags["dagster-k8s/config"])
+        assert payload["container_config"]["envFrom"] == [{"configMapRef": {"name": "my-config"}}]

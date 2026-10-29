@@ -28,15 +28,22 @@ def _get_global_timezone() -> str:
         return "UTC"
 
 
-def get_observe_sources_schedule():
-    from ...assets.sources.automation import load_filtered_observable_sources
+def get_observe_sources_schedules():
+    from ...jobs.sources.jobs import get_observe_sources_jobs
 
-    if not load_filtered_observable_sources():
-        return None
-    return ScheduleDefinition(
-        name="observe_sources_schedule",
-        cron_schedule=os.getenv("LUBAN_OBSERVE_SOURCES_CRON", "*/5 * * * *"),
-        job_name="observe_sources_job",
-        default_status=DefaultScheduleStatus.RUNNING,
-        execution_timezone=_get_global_timezone(),
-    )
+    jobs = get_observe_sources_jobs()
+    if not jobs:
+        return []
+
+    cron_schedule = os.getenv("LUBAN_OBSERVE_SOURCES_CRON", "*/5 * * * *")
+    execution_timezone = _get_global_timezone()
+    return [
+        ScheduleDefinition(
+            name="observe_sources_schedule" if len(jobs) == 1 else f"observe_sources_schedule_{i}",
+            cron_schedule=cron_schedule,
+            job_name=job.name,
+            default_status=DefaultScheduleStatus.RUNNING,
+            execution_timezone=execution_timezone,
+        )
+        for i, job in enumerate(jobs, start=1)
+    ]
