@@ -7,6 +7,7 @@ This directory contains developer-facing documentation for `dbt-dagsterizer`.
 - Getting started: [getting-started.md](getting-started.md)
 - Concepts overview: [concepts/overview.md](concepts/overview.md)
 - CLI reference: [concepts/cli.md](concepts/cli.md)
+- Environment configuration (`.env`): [concepts/env.md](concepts/env.md)
 - Execution model and env propagation: [concepts/execution-model.md](concepts/execution-model.md)
 - Observability (OpenTelemetry + Elastic APM): [observability.md](observability.md)
 - `sources.yml` `meta.luban` reference: [concepts/sources-yml.md](concepts/sources-yml.md)

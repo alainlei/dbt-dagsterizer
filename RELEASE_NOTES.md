@@ -7,6 +7,36 @@ These notes are intended to be a polished companion to `CHANGELOG.md`:
 - `CHANGELOG.md` remains the cumulative project history.
 - This document provides concise, version-by-version release summaries that are easy to reuse for GitHub Releases and upgrade communication.
 
+## Unreleased
+
+### Summary
+
+StarRocks client timeouts are now configurable, and source observations are split into configurable batches to reduce per-run memory pressure in code locations with many sources. A new [environment configuration guide](docs/concepts/env.md) consolidates `.env` setup and reference material, with links from the documentation index and concepts overview.
+
+### Added
+
+- **StarRocks timeout configuration:** `STARROCKS_CONNECT_TIMEOUT` controls the Dagster StarRocks resource's PyMySQL connection, read, and write timeouts in seconds. The default remains `10`; the setting is separate from dbt's query timeout configuration.
+- **Observation job batching:** `LUBAN_OBSERVE_SOURCES_BATCH_SIZE` sets the maximum observable source assets per job (default `5`, positive integers only). Each batch gets its own job and schedule, while retaining Kubernetes run-environment injection tags.
+
+### Changed
+
+- A single non-empty observation batch keeps `observe_sources_job` and `observe_sources_schedule`. Multiple batches use `observe_sources_job_1`, `observe_sources_job_2`, and matching `observe_sources_schedule_1`, `observe_sources_schedule_2`, etc. Projects with no observable sources generate neither observation jobs nor schedules.
+- All batch schedules use the same `LUBAN_OBSERVE_SOURCES_CRON` (default every five minutes) and global orchestration timezone, with default status RUNNING.
+- The generated `.env.example` includes both new settings and clarifies that the observation cron is shared across batches.
+
+### Documentation
+
+- Covers all 51 variables in the generated `.env.example`, distinguishing template values from runtime defaults across Dagster/dbt, StarRocks, partitions, source observation, OpenTelemetry, SQL Server replication, and SSRS.
+- Explains dotenv loading precedence differences between generated code locations and CLI preparation, Python parser versus Make behavior, restart requirements, and common configuration errors.
+- Describes Kubernetes code-location/run-pod environment propagation and secret handling, including the existing GitOps export limitation that can place `SQLSERVER_PASSWORD` or custom secrets in ConfigMaps.
+
+### Upgrade Notes
+
+- Both new environment variables are optional; no YAML schema migration is required. Set `STARROCKS_CONNECT_TIMEOUT` in the code-location and run-worker environments that access StarRocks, and restart the affected processes to apply it. Omitting it retains the 10-second timeout.
+- **Observation naming change:** with more than five observable sources, default batching replaces the former single job/schedule with numbered definitions. Update any external references or monitoring and review the new schedules' enabled state. To retain a single job and its existing name, set the batch size at least as high as the observable source count, accepting the larger per-run workload.
+- Batch schedules share a cron and can launch runs together. Review Dagster run-concurrency limits alongside batch size; batching limits each run's source selection, not total concurrent runs.
+- Before using GitOps environment export, remove `SQLSERVER_PASSWORD` and custom secrets from its input and inject them separately through a Secret. The guide documents this existing limitation; it does not fix the exporter.
+
 ## v0.5.5
 
 Release date: 2026-10-09

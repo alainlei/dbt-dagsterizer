@@ -50,6 +50,7 @@ Code locations often need to import successfully even before the dbt project is 
 ## See also
 
 - CLI reference: `cli.md`
+- Environment configuration (`.env`): [env.md](env.md)
 - Code location template concept: `dagster-dbt-code-location-template.md`
 - Execution model and env propagation: `execution-model.md`
 - Observability (OpenTelemetry + Elastic APM): [../observability.md](../observability.md)

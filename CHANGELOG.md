@@ -4,6 +4,22 @@ All notable changes to `dbt-dagsterizer` will be documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [Unreleased]
+
+### Added
+
+- **Configurable StarRocks client timeout:** `STARROCKS_CONNECT_TIMEOUT` sets the Dagster StarRocks resource's PyMySQL connection, read, and write timeouts in seconds. Omitting it preserves the existing 10-second default. This does not change the dbt adapter's query timeout.
+- **Configurable source observation batching:** `LUBAN_OBSERVE_SOURCES_BATCH_SIZE` limits the number of observable source assets selected by each observation job, reducing per-run memory pressure for code locations with many sources. Defaults to `5`; non-integer, zero, and negative values are rejected during job construction.
+- **Environment configuration guide:** [docs/concepts/env.md](docs/concepts/env.md) documents local setup, all 51 variables in the generated `.env.example`, template values versus runtime defaults, and troubleshooting. It explains the differing root/nested dotenv precedence in generated code locations and CLI manifest preparation, Python parser versus Make syntax, partition date formats, and Kubernetes environment propagation.
+- **Secret-handling guidance:** the guide documents the existing GitOps export limitation that `SQLSERVER_PASSWORD` and custom secret keys can appear in ConfigMap output, with instructions to use sanitized inputs and inject secrets separately. This is documentation of existing behavior, not a security fix.
+
+### Changed
+
+- Source observation now generates one job and schedule per batch. A single non-empty batch retains `observe_sources_job` and `observe_sources_schedule`; multiple batches use numbered names starting at `observe_sources_job_1` and `observe_sources_schedule_1`. No observation jobs or schedules are generated when there are no observable sources.
+- All observation batch schedules share `LUBAN_OBSERVE_SOURCES_CRON` (default `*/5 * * * *`) and the global orchestration timezone, and default to RUNNING. Each batch job retains Kubernetes run-environment injection tags. Deployments with multiple batches must review references to the former single job/schedule names and run-concurrency limits.
+- The generated `.env.example` now includes `STARROCKS_CONNECT_TIMEOUT=10` and `LUBAN_OBSERVE_SOURCES_BATCH_SIZE=5`, and describes the observation cron as shared across batches.
+- Linked the environment configuration guide from the documentation index and concepts overview.
+
 ## [0.5.5] - 2026-10-09
 
 ### Added
